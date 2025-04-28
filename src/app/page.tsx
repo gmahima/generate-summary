@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { FileUpload } from "@/components/file-upload";
 import { SummaryOutput } from "@/components/summary-output";
-import { CustomButton } from "@/components/custom-button";
+import { Button } from "@/components/button";
 import { generateSummary } from "@/lib/summary-service";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
@@ -55,13 +55,13 @@ export default function Home() {
           <FileUpload onFileChange={handleFileChange} />
           
           <div className="flex justify-center">
-            <CustomButton 
+            <Button 
               onClick={handleGenerateSummary}
               disabled={!file || isLoading}
               className="w-full max-w-[200px]"
             >
               {isLoading ? "Generating..." : "Generate Summary"}
-            </CustomButton>
+            </Button>
           </div>
 
           <SummaryOutput summary={summary} isLoading={isLoading} />

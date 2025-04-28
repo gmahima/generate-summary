@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+echo "🔍 Running TypeScript checks..."
+npm run type-check || { echo "❌ TypeScript check failed"; exit 1; }
+
+echo "📦 Running Vercel production build simulation..."
+npm run vercel-build || { echo "❌ Vercel build simulation failed"; exit 1; }
+
+echo "✅ All checks passed - your code should deploy successfully on Vercel" 

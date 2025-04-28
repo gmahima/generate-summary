@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button as ShadcnButton, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { forwardRef } from "react";
 import { VariantProps } from "class-variance-authority";
@@ -11,17 +11,17 @@ type ButtonProps = React.ComponentProps<"button"> &
     asChild?: boolean;
   };
 
-const CustomButton = forwardRef<HTMLButtonElement, ButtonProps>(
+const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, ...props }, ref) => {
     return (
-      <Button
-        className={cn("cursor-pointer", className)}
+      <ShadcnButton
+        className={cn("cursor-pointer disabled:cursor-not-allowed", className)}
         ref={ref}
         {...props}
       />
     );
   }
 );
-CustomButton.displayName = "CustomButton";
+Button.displayName = "Button";
 
-export { CustomButton }; 
+export { Button }; 
