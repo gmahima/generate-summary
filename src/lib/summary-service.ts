@@ -10,6 +10,7 @@ import { Document } from "@langchain/core/documents";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import { LANGUAGE_CONFIG, SupportedLanguage } from "./language-config";
 
 /**
  * Generates a summary of a PDF file using AI with LangChain and Groq
@@ -17,8 +18,14 @@ import * as os from "os";
 export async function generateSummary(formData: FormData): Promise<string> {
   console.log("🚀 Starting PDF summary generation process");
 
-  // Get the file from formData
+  // Get the file and language from formData
   const file = formData.get("file") as File;
+  const language = (formData.get("language") as SupportedLanguage) || "english";
+  const languageConfig = LANGUAGE_CONFIG[language] || LANGUAGE_CONFIG.english;
+
+  console.log(
+    `🌐 Selected output language for summary: ${languageConfig.outputLanguage}`,
+  );
 
   if (!file) {
     console.error("❌ No file provided in the form data");
@@ -98,7 +105,7 @@ export async function generateSummary(formData: FormData): Promise<string> {
     });
     console.log("✅ Groq model initialized");
 
-    // Create a prompt template for summarization
+    // Create a prompt template for summarization with language output instructions
     console.log("📝 Creating prompt template...");
     const summaryPrompt = PromptTemplate.fromTemplate(`
       You are a professional document summarizer.
@@ -107,10 +114,12 @@ export async function generateSummary(formData: FormData): Promise<string> {
       that captures the key points, main arguments, and conclusions. The summary should be 
       well-structured, clear, and concise while preserving the important details.
       
+      IMPORTANT: Your summary MUST be written entirely in ${languageConfig.outputLanguage} language.
+      
       Document content:
       {text}
       
-      Summary:
+      ${languageConfig.outputLanguage} Summary:
     `);
 
     // Prepare the text input (join chunks with reasonable limit)
@@ -130,7 +139,7 @@ export async function generateSummary(formData: FormData): Promise<string> {
     ]);
 
     // Execute the chain
-    console.log("🏃 Executing summarization chain...");
+    console.log(`🏃 Executing summarization chain in ${language}...`);
     console.time("summarization");
     const summary = await chain.invoke({
       text: combinedText,
