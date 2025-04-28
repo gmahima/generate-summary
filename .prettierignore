@@ -1,0 +1,17 @@
+# Shadcn auto-generated components
+src/components/ui/
+
+# Build output
+.next/
+out/
+dist/
+build/
+
+# Dependencies
+node_modules/
+
+# Cache
+.turbo/
+
+# Misc
+.DS_Store 
