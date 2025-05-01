@@ -198,7 +198,7 @@ export function ChatInterface({
       const chunks = result.data?.sampleChunks || [];
       const chunkPreview =
         chunks.length > 0
-          ? `\n\nSample chunk content: "${chunks[0]?.content?.substring(0, 100)}..."`
+          ? `\n\nSample chunk content: "${typeof chunks[0]?.content === "string" ? chunks[0].content.substring(0, 100) : ""}..."`
           : "";
 
       const testMessage: Message = {
