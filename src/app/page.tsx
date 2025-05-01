@@ -16,6 +16,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { ChatInterface } from "@/components/chat-interface";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
@@ -63,45 +65,65 @@ export default function Home() {
       <Toaster position="top-right" />
       <div className="max-w-4xl mx-auto">
         <header className="mb-8 text-center">
-          <h1 className="text-3xl font-bold mb-2">PDF Summary Generator</h1>
+          <h1 className="text-3xl font-bold mb-2">PDF Assistant</h1>
           <p className="text-muted-foreground">
-            Upload a PDF and generate an AI-powered summary
+            Upload a PDF to generate summaries and chat with your document
           </p>
         </header>
 
         <div className="grid gap-8">
           <FileUpload onFileChange={handleFileChange} />
 
-          <div className="grid gap-2">
-            <Label htmlFor="language-select">Summary Language</Label>
-            <Select value={language} onValueChange={handleLanguageChange}>
-              <SelectTrigger
-                id="language-select"
-                className="w-full max-w-[200px]"
-              >
-                <SelectValue placeholder="Select language" />
-              </SelectTrigger>
-              <SelectContent>
-                {SUPPORTED_LANGUAGES.map((lang) => (
-                  <SelectItem key={lang.value} value={lang.value}>
-                    {lang.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {file && (
+            <Tabs defaultValue="summary">
+              <TabsList className="grid w-full max-w-md mx-auto grid-cols-2">
+                <TabsTrigger value="summary">Generate Summary</TabsTrigger>
+                <TabsTrigger value="chat">Chat with PDF</TabsTrigger>
+              </TabsList>
 
-          <div className="flex justify-center">
-            <Button
-              onClick={handleGenerateSummary}
-              disabled={!file || isLoading}
-              className="w-full max-w-[200px]"
-            >
-              {isLoading ? "Generating..." : "Generate Summary"}
-            </Button>
-          </div>
+              <TabsContent value="summary" className="mt-6">
+                <div className="grid gap-6">
+                  <div className="grid gap-2">
+                    <Label htmlFor="language-select">Summary Language</Label>
+                    <Select
+                      value={language}
+                      onValueChange={handleLanguageChange}
+                    >
+                      <SelectTrigger
+                        id="language-select"
+                        className="w-full max-w-[200px]"
+                      >
+                        <SelectValue placeholder="Select language" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {SUPPORTED_LANGUAGES.map((lang) => (
+                          <SelectItem key={lang.value} value={lang.value}>
+                            {lang.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
 
-          <SummaryOutput summary={summary} isLoading={isLoading} />
+                  <div className="flex justify-center">
+                    <Button
+                      onClick={handleGenerateSummary}
+                      disabled={!file || isLoading}
+                      className="w-full max-w-[200px]"
+                    >
+                      {isLoading ? "Generating..." : "Generate Summary"}
+                    </Button>
+                  </div>
+
+                  <SummaryOutput summary={summary} isLoading={isLoading} />
+                </div>
+              </TabsContent>
+
+              <TabsContent value="chat" className="mt-6">
+                <ChatInterface pdfFile={file} />
+              </TabsContent>
+            </Tabs>
+          )}
         </div>
       </div>
     </div>
