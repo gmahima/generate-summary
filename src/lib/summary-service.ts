@@ -18,8 +18,9 @@ import { LANGUAGE_CONFIG, SupportedLanguage } from "./language-config";
 export async function generateSummary(formData: FormData): Promise<string> {
   console.log("🚀 Starting PDF summary generation process");
 
-  // Get the file and language from formData
+  // Get parameters from formData
   const file = formData.get("file") as File;
+  const pdfId = formData.get("pdfId") as string;
   const language = (formData.get("language") as SupportedLanguage) || "english";
   const languageConfig = LANGUAGE_CONFIG[language] || LANGUAGE_CONFIG.english;
 
@@ -27,47 +28,106 @@ export async function generateSummary(formData: FormData): Promise<string> {
     `🌐 Selected output language for summary: ${languageConfig.outputLanguage}`,
   );
 
-  if (!file) {
-    console.error("❌ No file provided in the form data");
-    throw new Error("No file provided");
+  // Check if we have either a file or a pdfId
+  if (!file && !pdfId) {
+    console.error("❌ Neither file nor pdfId provided in the form data");
+    throw new Error("No file or PDF ID provided");
   }
 
-  console.log(
-    `📄 Processing file: ${file.name}, Size: ${(file.size / 1024).toFixed(2)} KB, Type: ${file.type}`,
-  );
+  let docs: Document[] = [];
+  let tempFilePath = "";
 
-  // Create a temporary file for the PDF
-  const tempDir = os.tmpdir();
-  const tempFilePath = path.join(tempDir, `pdf-${Date.now()}.pdf`);
-
-  try {
-    console.log("📥 Converting file to buffer...");
-    // Convert File to Buffer for processing
-    const fileBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(fileBuffer);
-    console.log(`✅ Converted to buffer of size: ${buffer.length} bytes`);
-
-    // Write buffer to temporary file
-    console.log(`💾 Writing PDF data to temporary file: ${tempFilePath}`);
-    fs.writeFileSync(tempFilePath, buffer);
-    console.log("✅ Temporary file created");
-
-    // Load and parse the PDF using the file path
-    console.log("📚 Loading and parsing PDF content...");
-    const loader = new PDFLoader(tempFilePath);
-    const docs = await loader.load();
-    console.log(`📄 Loaded ${docs.length} pages from PDF`);
-
-    if (docs.length === 0) {
-      console.warn("⚠️ No content extracted from PDF");
-      return "Could not extract any content from the provided PDF file.";
-    }
-
-    // Log a sample of the first page content
+  // Handle PDF from file upload
+  if (file) {
     console.log(
-      `📝 First page sample: "${docs[0]?.pageContent.substring(0, 100)}..."`,
+      `📄 Processing uploaded file: ${file.name}, Size: ${(file.size / 1024).toFixed(2)} KB, Type: ${file.type}`,
     );
 
+    // Create a temporary file for the PDF
+    const tempDir = os.tmpdir();
+    tempFilePath = path.join(tempDir, `pdf-${Date.now()}.pdf`);
+
+    try {
+      console.log("📥 Converting file to buffer...");
+      // Convert File to Buffer for processing
+      const fileBuffer = await file.arrayBuffer();
+      const buffer = Buffer.from(fileBuffer);
+      console.log(`✅ Converted to buffer of size: ${buffer.length} bytes`);
+
+      // Write buffer to temporary file
+      console.log(`💾 Writing PDF data to temporary file: ${tempFilePath}`);
+      fs.writeFileSync(tempFilePath, buffer);
+      console.log("✅ Temporary file created");
+
+      // Load and parse the PDF using the file path
+      console.log("📚 Loading and parsing PDF content...");
+      const loader = new PDFLoader(tempFilePath);
+      docs = await loader.load();
+      console.log(`📄 Loaded ${docs.length} pages from PDF`);
+    } catch (error) {
+      console.error("❌ Error processing uploaded file:", error);
+      throw error;
+    }
+  }
+  // Handle PDF from library (using pdfId)
+  else if (pdfId) {
+    console.log(`📚 Retrieving PDF content from database for ID: ${pdfId}`);
+
+    try {
+      // Import the createClient function from supabase
+      const { createClient } = await import("@supabase/supabase-js");
+
+      // Initialize Supabase client
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL as string;
+      const supabaseServiceKey = process.env
+        .SUPABASE_SERVICE_ROLE_KEY as string;
+      const supabaseClient = createClient(supabaseUrl, supabaseServiceKey);
+
+      // Fetch the PDF content from the database
+      const { data: pdfData, error: pdfError } = await supabaseClient
+        .from("pdfs")
+        .select("content, name")
+        .eq("id", pdfId)
+        .single();
+
+      if (pdfError) {
+        console.error("❌ Error retrieving PDF from database:", pdfError);
+        throw new Error(`Failed to retrieve PDF: ${pdfError.message}`);
+      }
+
+      if (!pdfData || !pdfData.content) {
+        console.error("❌ No content found for PDF ID:", pdfId);
+        throw new Error("PDF content not found in database");
+      }
+
+      console.log(
+        `📄 Retrieved PDF content for "${pdfData.name}" from database`,
+      );
+
+      // Create a Document object from the database content
+      docs = [
+        new Document({
+          pageContent: pdfData.content,
+          metadata: { source: `Database PDF ID: ${pdfId}` },
+        }),
+      ];
+    } catch (error) {
+      console.error("❌ Error retrieving PDF from database:", error);
+      throw error;
+    }
+  }
+
+  if (docs.length === 0) {
+    console.warn("⚠️ No content extracted from PDF");
+    return "Could not extract any content from the provided PDF file.";
+  }
+
+  // Log a sample of the first page content
+  console.log(
+    `📝 First page sample: "${docs[0]?.pageContent.substring(0, 100)}..."`,
+  );
+
+  try {
     // Split the document into manageable chunks
     console.log("✂️ Splitting document into chunks...");
     const textSplitter = new RecursiveCharacterTextSplitter({
@@ -80,7 +140,7 @@ export async function generateSummary(formData: FormData): Promise<string> {
     // Log some information about the chunks
     if (splits.length > 0) {
       console.log(
-        `📊 Average chunk size: ${splits.reduce((sum, doc) => sum + doc.pageContent.length, 0) / splits.length} characters`,
+        ` Average chunk size: ${splits.reduce((sum, doc) => sum + doc.pageContent.length, 0) / splits.length} characters`,
       );
       console.log(
         `📊 First chunk sample: "${splits[0]?.pageContent.substring(0, 50)}..."`,
@@ -148,12 +208,14 @@ export async function generateSummary(formData: FormData): Promise<string> {
     console.log(`✅ Summary generated (${summary.length} characters)`);
 
     // Clean up
-    console.log("🧹 Cleaning up resources...");
-    if (fs.existsSync(tempFilePath)) {
-      fs.unlinkSync(tempFilePath);
-      console.log("✅ Temporary file removed");
+    if (tempFilePath) {
+      console.log("🧹 Cleaning up resources...");
+      if (fs.existsSync(tempFilePath)) {
+        fs.unlinkSync(tempFilePath);
+        console.log("✅ Temporary file removed");
+      }
+      console.log("✅ Resources cleaned up");
     }
-    console.log("✅ Resources cleaned up");
 
     console.log("🎉 Summary generation completed successfully");
     return summary;
@@ -162,13 +224,15 @@ export async function generateSummary(formData: FormData): Promise<string> {
     console.error("Error details:", JSON.stringify(error, null, 2));
 
     // Clean up temporary file in case of error
-    try {
-      if (fs.existsSync(tempFilePath)) {
-        fs.unlinkSync(tempFilePath);
-        console.log("✅ Temporary file removed during error handling");
+    if (tempFilePath) {
+      try {
+        if (fs.existsSync(tempFilePath)) {
+          fs.unlinkSync(tempFilePath);
+          console.log("✅ Temporary file removed during error handling");
+        }
+      } catch (cleanupError) {
+        console.error("❌ Error cleaning up temporary file:", cleanupError);
       }
-    } catch (cleanupError) {
-      console.error("❌ Error cleaning up temporary file:", cleanupError);
     }
 
     return `Failed to generate summary: ${error instanceof Error ? error.message : String(error)}`;

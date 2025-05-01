@@ -34,21 +34,37 @@ export async function queryPdfDocument(
   console.log("🤖 Starting PDF query process with RAG");
 
   try {
+    // Log the values we're receiving
+    const query = formData.get("query");
+    const pdfId = formData.get("pdfId");
+    console.log(`📝 Query: "${query}"`);
+    console.log(`🔑 PDF ID: ${pdfId}`);
+
     // Forward the request to our RAG implementation in rag-service.ts
     // This will:
     // 1. Convert the query to an embedding using Jina
     // 2. Find relevant document chunks in Supabase
     // 3. Generate a response using Groq LLM
-    return await queryDocument(formData);
+    try {
+      return await queryDocument(formData);
+    } catch (ragError) {
+      console.error("❌ Error in queryDocument function:", ragError);
+      console.error("Error details:", JSON.stringify(ragError, null, 2));
+      throw ragError; // Re-throw to be caught by outer catch
+    }
   } catch (error) {
     // Log the error for debugging
     console.error("❌ Error querying document:", error);
+    console.error(
+      "Stack trace:",
+      error instanceof Error ? error.stack : "No stack trace",
+    );
 
     // Return a user-friendly error message
     return {
       answer: `Sorry, I encountered an error while processing your query: ${
         error instanceof Error ? error.message : "Unknown error"
-      }`,
+      }. Please try again later or contact support if the issue persists.`,
     };
   }
 }

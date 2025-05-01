@@ -122,8 +122,9 @@ export default function Home() {
    * This uses the summary service to generate a summary
    */
   const handleGenerateSummary = async () => {
-    if (!file) {
-      toast.error("Please upload a PDF file first");
+    // Check if we have either a file or a PDF ID
+    if (!file && !pdfId) {
+      toast.error("Please upload or select a PDF first");
       return;
     }
 
@@ -132,8 +133,19 @@ export default function Home() {
 
       // Create FormData to pass to server action
       const formData = new FormData();
-      formData.append("file", file);
+
+      // If we have a file, use that
+      if (file) {
+        formData.append("file", file);
+      }
+
+      // If we have a PDF ID, use that (for library PDFs)
+      if (pdfId) {
+        formData.append("pdfId", pdfId);
+      }
+
       formData.append("language", language);
+      formData.append("userId", userId);
 
       const result = await generateSummary(formData);
       setSummary(result);
@@ -218,7 +230,7 @@ export default function Home() {
                   <div className="flex justify-center">
                     <Button
                       onClick={handleGenerateSummary}
-                      disabled={!file || isLoading || !pdfId}
+                      disabled={!(file || pdfId) || isLoading}
                       className="w-full max-w-[200px]"
                     >
                       {isLoading ? "Generating..." : "Generate Summary"}
@@ -245,7 +257,7 @@ export default function Home() {
                       >
                         {isProcessing
                           ? "Processing..."
-                          : "Process and store PDF for Chat"}
+                          : "Process PDF for Chat & Summary"}
                       </Button>
                     </div>
                   )}

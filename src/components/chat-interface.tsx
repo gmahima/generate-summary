@@ -9,6 +9,14 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { queryPdfDocument } from "@/lib/chat-service";
+import {
+  testServerAction,
+  testDatabaseAccess,
+  testEmbeddings,
+  testVectorStore,
+  checkDatabaseContent,
+  checkMatchDocumentsFunction,
+} from "@/lib/test-service";
 import { TEMPORARY_USER_ID } from "@/lib/constants";
 
 /**
@@ -86,6 +94,12 @@ export function ChatInterface({
     if (!input.trim()) return;
     if (!pdfId) {
       console.error("Missing pdfId - cannot query document");
+      const errorMessage: Message = {
+        role: "assistant",
+        content:
+          "Sorry, I don't have access to any document to query. Please make sure you've uploaded or selected a PDF first.",
+      };
+      setMessages((prev) => [...prev, errorMessage]);
       return;
     }
 
@@ -102,8 +116,24 @@ export function ChatInterface({
       formData.append("pdfId", pdfId);
       formData.append("userId", userId);
 
-      // Call the RAG service to get an answer
-      const response = await queryPdfDocument(formData);
+      console.log(`Sending query for PDF ID: ${pdfId}`);
+
+      // Set a timeout to detect if server actions aren't responding
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => {
+          reject(
+            new Error(
+              "Request to server timed out - server actions may not be working",
+            ),
+          );
+        }, 10000); // 10 second timeout
+      });
+
+      // Race between the actual query and the timeout
+      const response = (await Promise.race([
+        queryPdfDocument(formData),
+        timeoutPromise,
+      ])) as { answer: string };
 
       // Add response to chat
       const assistantMessage: Message = {
@@ -113,10 +143,212 @@ export function ChatInterface({
 
       setMessages((prev) => [...prev, assistantMessage]);
     } catch (error) {
+      console.error("Error in chat request:", error);
+
       // Handle error with friendly message
       const errorMessage: Message = {
         role: "assistant",
-        content: `Sorry, I encountered an error: ${error instanceof Error ? error.message : "Unknown error"}`,
+        content: `Sorry, I encountered an error: ${error instanceof Error ? error.message : "Unknown error"}. This could be a server-side issue with the RAG implementation.`,
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Add a new function to test server actions
+  const handleTestServerAction = async () => {
+    setIsLoading(true);
+    try {
+      const result = await testServerAction();
+      // Add the result as a message
+      const testMessage: Message = {
+        role: "assistant",
+        content: `Server test result: ${result.status}. ${result.message}`,
+      };
+      setMessages((prev) => [...prev, testMessage]);
+    } catch (error) {
+      console.error("Error testing server action:", error);
+      const errorMessage: Message = {
+        role: "assistant",
+        content: `Server test failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Add a new function to test database access
+  const handleTestDatabase = async () => {
+    if (!pdfId) {
+      const errorMessage: Message = {
+        role: "assistant",
+        content: "No PDF ID available. Please select a PDF first.",
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const result = await testDatabaseAccess(pdfId);
+
+      // Add the result as a message
+      const chunks = result.data?.sampleChunks || [];
+      const chunkPreview =
+        chunks.length > 0
+          ? `\n\nSample chunk content: "${chunks[0]?.content?.substring(0, 100)}..."`
+          : "";
+
+      const testMessage: Message = {
+        role: "assistant",
+        content: `Database test result: ${result.status}. ${result.message}${chunkPreview}`,
+      };
+      setMessages((prev) => [...prev, testMessage]);
+    } catch (error) {
+      console.error("Error testing database access:", error);
+      const errorMessage: Message = {
+        role: "assistant",
+        content: `Database test failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Add a function to test embeddings
+  const handleTestEmbeddings = async () => {
+    setIsLoading(true);
+    try {
+      const result = await testEmbeddings();
+
+      // Add the result as a message
+      const embeddingPreview = result.data?.embedding
+        ? `\n\nSample embedding dimensions: [${result.data.embedding.join(", ")}]...`
+        : "";
+
+      const testMessage: Message = {
+        role: "assistant",
+        content: `Embeddings test result: ${result.status}. ${result.message}${embeddingPreview}`,
+      };
+      setMessages((prev) => [...prev, testMessage]);
+    } catch (error) {
+      console.error("Error testing embeddings:", error);
+      const errorMessage: Message = {
+        role: "assistant",
+        content: `Embeddings test failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Add a function to test the vector store
+  const handleTestVectorStore = async () => {
+    if (!pdfId) {
+      const errorMessage: Message = {
+        role: "assistant",
+        content: "No PDF ID available. Please select a PDF first.",
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const result = await testVectorStore(pdfId);
+
+      // Add the result as a message
+      let docPreview = "";
+      if (result.data?.retrievedDocs && result.data.retrievedDocs.length > 0) {
+        const doc = result.data.retrievedDocs[0];
+        docPreview = `\n\nSample retrieved content: "${doc.content}"`;
+      }
+
+      const testMessage: Message = {
+        role: "assistant",
+        content: `Vector store test result: ${result.status}. ${result.message}${docPreview}`,
+      };
+      setMessages((prev) => [...prev, testMessage]);
+    } catch (error) {
+      console.error("Error testing vector store:", error);
+      const errorMessage: Message = {
+        role: "assistant",
+        content: `Vector store test failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Add a function to check database content
+  const handleCheckDatabase = async () => {
+    setIsLoading(true);
+    try {
+      const result = await checkDatabaseContent();
+
+      // Format the result for display
+      let details = "";
+      if (result.data) {
+        const data = result.data as {
+          chunkCount?: number;
+          sampleData?: {
+            content_preview: string;
+            has_embedding: boolean;
+            embedding_length: number;
+            metadata: Record<string, unknown>;
+          };
+        };
+        if (data.chunkCount) {
+          details += `\n\nChunk count: ${data.chunkCount}`;
+        }
+        if (data.sampleData) {
+          const sample = data.sampleData;
+          details += `\n\nSample data:`;
+          details += `\n- Content: "${sample.content_preview}..."`;
+          details += `\n- Has embedding: ${sample.has_embedding}`;
+          details += `\n- Embedding length: ${sample.embedding_length}`;
+          details += `\n- Metadata: ${JSON.stringify(sample.metadata)}`;
+        }
+      }
+
+      const testMessage: Message = {
+        role: "assistant",
+        content: `Database content check: ${result.status}. ${result.message}${details}`,
+      };
+      setMessages((prev) => [...prev, testMessage]);
+    } catch (error) {
+      console.error("Error checking database content:", error);
+      const errorMessage: Message = {
+        role: "assistant",
+        content: `Database content check failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Add a function to check match_documents function
+  const handleCheckMatchFunction = async () => {
+    setIsLoading(true);
+    try {
+      const result = await checkMatchDocumentsFunction();
+
+      const testMessage: Message = {
+        role: "assistant",
+        content: `Match function check: ${result.status}. ${result.message}`,
+      };
+      setMessages((prev) => [...prev, testMessage]);
+    } catch (error) {
+      console.error("Error checking match_documents function:", error);
+      const errorMessage: Message = {
+        role: "assistant",
+        content: `Match function check failed: ${error instanceof Error ? error.message : "Unknown error"}`,
       };
       setMessages((prev) => [...prev, errorMessage]);
     } finally {
@@ -132,7 +364,59 @@ export function ChatInterface({
   return (
     <Card className="w-full">
       <CardHeader>
-        <CardTitle>Chat with your PDF</CardTitle>
+        <CardTitle className="flex flex-col sm:flex-row gap-2 justify-between items-start sm:items-center">
+          <span>Chat with your PDF</span>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleTestServerAction}
+              disabled={isLoading}
+            >
+              Test Server
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleTestDatabase}
+              disabled={isLoading || !pdfId}
+            >
+              Test Database
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleTestEmbeddings}
+              disabled={isLoading}
+            >
+              Test Embeddings
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleTestVectorStore}
+              disabled={isLoading || !pdfId}
+            >
+              Test Vector Store
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCheckDatabase}
+              disabled={isLoading}
+            >
+              Check Database
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCheckMatchFunction}
+              disabled={isLoading}
+            >
+              Check Match Function
+            </Button>
+          </div>
+        </CardTitle>
       </CardHeader>
       <CardContent className="p-4 h-[400px] overflow-y-auto flex flex-col gap-4">
         {/* Render chat messages */}

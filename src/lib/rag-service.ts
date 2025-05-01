@@ -18,10 +18,7 @@ import { JinaEmbeddings } from "@langchain/community/embeddings/jina";
 import { ChatGroq } from "@langchain/groq";
 import { PromptTemplate } from "@langchain/core/prompts";
 import { StringOutputParser } from "@langchain/core/output_parsers";
-import {
-  RunnableSequence,
-  RunnablePassthrough,
-} from "@langchain/core/runnables";
+import { RunnableSequence } from "@langchain/core/runnables";
 
 // Database connectivity
 // NOTE: You need to install this package: npm install @supabase/supabase-js
@@ -213,13 +210,75 @@ export async function processPdf(formData: FormData): Promise<{
 
     // Store documents with embeddings in Supabase
     // This creates an embedding for each chunk and stores both the text and embedding
-    await SupabaseVectorStore.fromDocuments(chunkedDocs, embeddings, {
-      client: supabaseClient,
-      tableName: "pdf_chunks",
-      queryName: "match_documents",
-    });
+    console.log(
+      `🧠 Storing ${chunkedDocs.length} document chunks with embeddings in Supabase...`,
+    );
 
-    console.log("✅ Document processed and stored with embeddings");
+    try {
+      // Add some additional console logging to see the metadata structure
+      if (chunkedDocs.length > 0) {
+        console.log(
+          "📋 Sample chunk metadata:",
+          JSON.stringify(chunkedDocs[0].metadata),
+        );
+      }
+
+      // Add debug logging about PDF ID
+      console.log(`💼 Using PDF ID for metadata: ${pdfData.id}`);
+
+      // Ensure PDF ID is stored in a format that matches our search filter
+      // We need to structure the metadata to match how we'll search for it later
+      const preparedDocs = chunkedDocs.map((doc) => {
+        // Make sure pdf_id is at the top level of metadata
+        return {
+          ...doc,
+          metadata: {
+            ...doc.metadata,
+            pdf_id: pdfData.id, // This is the crucial part - must match the filter format used in search
+          },
+        };
+      });
+
+      console.log("📊 Creating document embeddings with Jina API...");
+
+      // Directly create the vector store to ensure proper vector format
+      // This approach stores embeddings as proper vectors, not strings
+      const vectorStore = await SupabaseVectorStore.fromDocuments(
+        preparedDocs,
+        embeddings,
+        {
+          client: supabaseClient,
+          tableName: "pdf_chunks",
+          queryName: "match_documents",
+        },
+      );
+
+      console.log("✅ Successfully stored document chunks with embeddings");
+      console.log(
+        `✅ Vector store configured with ${vectorStore ? "valid" : "invalid"} configuration`,
+      );
+
+      // Verify storage by checking database
+      const { count, error } = await supabaseClient
+        .from("pdf_chunks")
+        .select("*", { count: "exact", head: true })
+        .filter("metadata->>pdf_id", "eq", pdfData.id);
+
+      if (error) {
+        console.error("❌ Error verifying stored chunks:", error);
+      } else {
+        console.log(
+          `📊 Verified ${count || 0} chunks stored for PDF ID: ${pdfData.id}`,
+        );
+      }
+
+      // Don't return vectorStore here - we'll return the proper object later
+    } catch (storeError) {
+      console.error("❌ Error storing chunks with embeddings:", storeError);
+      throw new Error(
+        `Failed to store document chunks: ${storeError instanceof Error ? storeError.message : "Unknown error"}`,
+      );
+    }
 
     // =========================================================
     // Step 8: Generate a summary of the document (optional)
@@ -290,129 +349,163 @@ export async function queryDocument(formData: FormData): Promise<{
   // Step 1: Extract and validate query parameters
   // =========================================================
 
-  // Get query and document ID from form data
-  const query = formData.get("query") as string;
-  const pdfId = formData.get("pdfId") as string;
-  // Using the constant user ID instead of getting from form data
-  const userId = TEMPORARY_USER_ID;
-
-  // Validate required inputs
-  if (!query) {
-    console.error("❌ No query provided");
-    throw new Error("No query provided");
-  }
-
-  if (!pdfId) {
-    console.error("❌ No PDF ID provided");
-    throw new Error("No PDF ID provided");
-  }
-
   try {
-    console.log(`🔍 Processing query: "${query}" for document ID: ${pdfId}`);
+    // Get query and document ID from form data
+    const query = formData.get("query") as string;
+    const pdfId = formData.get("pdfId") as string;
+    // Using the constant user ID instead of getting from form data
+    const userId = TEMPORARY_USER_ID;
 
-    // =========================================================
-    // Step 2: Initialize vector store with Jina embeddings
-    // =========================================================
+    console.log(
+      `🔎 Query details - Text: "${query.substring(0, 50)}...", PDF ID: ${pdfId}, User ID: ${userId}`,
+    );
 
-    // Create a vector store instance with Jina embeddings
-    const embeddings = createEmbeddings();
-    const vectorStore = new SupabaseVectorStore(embeddings, {
-      client: supabaseClient,
-      tableName: "pdf_chunks",
-      queryName: "match_documents",
-      filter: {
-        pdf_id: pdfId,
-      },
-    });
+    // Validate required inputs
+    if (!query) {
+      console.error("❌ No query provided");
+      throw new Error("No query provided");
+    }
 
-    // =========================================================
-    // Step 3: Configure and create the retriever
-    // =========================================================
+    if (!pdfId) {
+      console.error("❌ No PDF ID provided");
+      throw new Error("No PDF ID provided");
+    }
 
-    console.log("🔎 Retrieving relevant document chunks...");
-    // Create a retriever to fetch similar documents
-    const retriever = vectorStore.asRetriever({
-      // Specify retrieval parameters
-      searchType: "similarity", // Use similarity search (cosine similarity)
-      k: 5, // Number of chunks to retrieve
-      filter: {
-        pdf_id: pdfId, // Only search within the specified document
-      },
-    });
+    try {
+      console.log(`🔍 Processing query: "${query}" for document ID: ${pdfId}`);
 
-    // =========================================================
-    // Step 4: Create the prompt template for RAG
-    // =========================================================
+      // =========================================================
+      // Step 2: Initialize setup for direct chunk retrieval (test mode)
+      // =========================================================
 
-    // Create a prompt template that combines context and user question
-    const prompt = PromptTemplate.fromTemplate(`
-      You are an AI assistant for answering questions about documents.
-      Use the following pieces of context to answer the question at the end.
-      If you don't know the answer, just say that you don't know, don't try to make up an answer.
-      Keep your answers concise and helpful.
-      
-      Context:
-      {context}
-      
-      Question: {question}
-      
-      Answer:
-    `);
+      try {
+        console.log("🧪 Setting up test mode for direct chunk retrieval...");
 
-    // =========================================================
-    // Step 5: Set up the LLM and create the RAG chain
-    // =========================================================
+        // Check if we have any document chunks for this PDF directly with SQL
+        console.log("🔍 Checking for document chunks in database...");
+        const { count, error } = await supabaseClient
+          .from("pdf_chunks")
+          .select("*", { count: "exact", head: true })
+          .filter("metadata->>pdf_id", "eq", pdfId);
 
-    // Initialize the Groq model
-    const model = new ChatGroq({
-      apiKey: process.env.GROQ_API_KEY as string,
-      model: "llama-3.1-8b-instant", // Using Llama 3 for inference
-      temperature: 0, // Use 0 for more deterministic responses
-    });
+        console.log(
+          `📊 Found ${count || 0} chunks in database for PDF ID: ${pdfId}`,
+        );
 
-    // Build the RAG chain using LangChain's RunnableSequence
-    // This defines the execution pipeline for the RAG process
-    const chain = RunnableSequence.from([
-      {
-        // First, fetch relevant contexts
-        context: retriever.pipe((docs) => {
-          // Join all retrieved document chunks into a single context string
-          return docs.map((doc) => doc.pageContent).join("\n\n");
-        }),
-        // Pass through the original question
-        question: new RunnablePassthrough(),
-      },
-      // Apply the prompt template to format inputs
-      prompt,
-      // Send to the LLM
-      model,
-      // Extract the string output
-      new StringOutputParser(),
-    ]);
+        if (error) {
+          console.error("❌ Error checking document chunks:", error);
+          throw new Error(
+            `Database error when checking for chunks: ${error.message}`,
+          );
+        }
 
-    // =========================================================
-    // Step 6: Execute the RAG chain to generate an answer
-    // =========================================================
+        if (count === 0) {
+          console.warn(
+            "⚠️ No chunks found for this PDF. The document may not have been properly processed.",
+          );
+          return {
+            answer:
+              "I couldn't find any information for this document in my database. The document may not have been properly processed.",
+          };
+        }
 
-    console.log("🤖 Executing RAG chain with Groq LLM...");
-    const answer = await chain.invoke(query);
-    console.log("✅ Generated response using RAG");
+        // =========================================================
+        // Step 3: Retrieve chunks directly for testing
+        // =========================================================
 
-    // =========================================================
-    // Step 7: Store the conversation in chat history
-    // =========================================================
+        console.log("🔎 Setting up test mode for direct chunk retrieval...");
 
-    console.log("💾 Storing conversation in chat history...");
-    await supabaseClient.from("chat_history").insert({
-      pdf_id: pdfId,
-      user_id: userId,
-      user_message: query,
-      assistant_message: answer,
-    });
+        // TESTING: Retrieve first 2 chunks directly from database instead of using similarity search
+        const { data: chunkData, error: chunkError } = await supabaseClient
+          .from("pdf_chunks")
+          .select("content, embedding, metadata")
+          .filter("metadata->>pdf_id", "eq", pdfId)
+          .limit(2);
 
-    return { answer };
+        if (chunkError) {
+          console.error("❌ Error retrieving chunks:", chunkError);
+          throw new Error(`Failed to retrieve chunks: ${chunkError.message}`);
+        }
+
+        console.log(
+          `✅ Retrieved ${chunkData?.length || 0} chunks directly from database`,
+        );
+
+        // Convert database chunks to Document objects
+        const retrievedDocs = (chunkData || []).map(
+          (chunk) =>
+            new Document({
+              pageContent: chunk.content || "",
+              metadata: chunk.metadata || {},
+            }),
+        );
+
+        console.log(
+          `🧪 TEST MODE: Using ${retrievedDocs.length} direct chunks instead of similarity search`,
+        );
+
+        // Skip the normal retriever.invoke call since we're getting chunks directly
+
+        // =========================================================
+        // Step 4: Create the prompt template for RAG
+        // =========================================================
+
+        // Create a prompt template that combines context and user question
+        const prompt = PromptTemplate.fromTemplate(`
+          You are an AI assistant for answering questions about documents.
+          
+          You have been provided with specific sections from a PDF document.
+          
+          Use ONLY the following context to answer the question at the end.
+          If the context doesn't contain enough information to answer the question fully,
+          just say "I don't have enough information in the provided document to answer this question completely."
+          
+          DO NOT make up information that is not in the context.
+          
+          Context:
+          {context}
+          
+          Question: {question}
+          
+          Answer based ONLY on the context provided:
+        `);
+
+        // =========================================================
+        // Step 5: Set up the LLM and create the RAG chain
+        // =========================================================
+
+        // Initialize the Groq model
+        const model = new ChatGroq({
+          apiKey: process.env.GROQ_API_KEY as string,
+          model: "llama-3.1-8b-instant", // Using Llama 3 for inference
+          temperature: 0, // Use 0 for more deterministic responses
+        });
+
+        // =========================================================
+        // Step 6: Execute the RAG chain to generate an answer
+        // =========================================================
+
+        console.log("🤖 Executing RAG chain with Groq LLM...");
+
+        // Process the docs and generate an answer
+        return await processDocsAndGenerateAnswer(
+          retrievedDocs,
+          query,
+          pdfId,
+          userId,
+          prompt,
+          model,
+        );
+      } catch (error) {
+        console.error("❌ Error initializing vector store:", error);
+        throw error;
+      }
+    } catch (error) {
+      console.error("❌ Error querying document:", error);
+      throw error;
+    }
   } catch (error) {
-    console.error("❌ Error querying document:", error);
+    console.error("❌ Error in queryDocument:", error);
     throw error;
   }
 }
@@ -457,7 +550,15 @@ async function generateSummaryFromText(text: string): Promise<string> {
 
   // Create and execute a chain for summary generation
   const chain = RunnableSequence.from([
-    summaryPrompt,
+    {
+      invoke: async (input: { text: string }) => {
+        console.log(
+          "📄 Document text sample being passed to LLM:",
+          input.text.substring(0, 200) + "...",
+        );
+        return summaryPrompt.format(input);
+      },
+    },
     model,
     new StringOutputParser(),
   ]);
@@ -511,4 +612,57 @@ export async function fetchUserPdfs(): Promise<
     console.error("❌ Error in fetchUserPdfs:", error);
     throw error;
   }
+}
+
+/**
+ * Process retrieved documents and generate an answer using the LLM
+ */
+async function processDocsAndGenerateAnswer(
+  docs: Document[],
+  query: string,
+  pdfId: string,
+  userId: string,
+  prompt: PromptTemplate,
+  model: ChatGroq,
+): Promise<{ answer: string }> {
+  // Build context from retrieved documents
+  const context = docs.map((doc: Document) => doc.pageContent).join("\n\n");
+
+  // Format the full prompt for debugging
+  const formattedPrompt = await prompt.format({
+    context,
+    question: query,
+  });
+  console.log(
+    "📝 Formatted prompt sample:",
+    formattedPrompt.substring(0, 200) + "...",
+  );
+
+  // Execute the chain with the formatted input
+  let answer;
+
+  if (docs.length === 0) {
+    answer =
+      "I don't have any information about your document. No relevant content was found in the database.";
+  } else {
+    // Use the model directly with our formatted prompt instead of the chain
+    const response = await model.invoke(formattedPrompt);
+    answer = response.content.toString();
+  }
+
+  console.log("✅ Generated response using RAG");
+
+  // =========================================================
+  // Step 7: Store the conversation in chat history
+  // =========================================================
+
+  console.log("💾 Storing conversation in chat history...");
+  await supabaseClient.from("chat_history").insert({
+    pdf_id: pdfId,
+    user_id: userId,
+    user_message: query,
+    assistant_message: answer,
+  });
+
+  return { answer };
 }
