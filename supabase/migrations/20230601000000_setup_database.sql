@@ -37,17 +37,28 @@ CREATE TABLE IF NOT EXISTS chat_history (
 
 -- 6. Create the match_documents function for vector similarity search
 CREATE OR REPLACE FUNCTION match_documents(
-  query_embedding vector(1024),  -- The embedding vector of the search query (1024 dimensions for Jina v3)
-  match_count int DEFAULT 5,     -- Number of matches to return
-  similarity_threshold float DEFAULT 0.5, -- Minimum similarity score (0-1)
+  query_embedding vector(1024),  -- The embedding vector for Jina v3
+  match_count int DEFAULT 5,     
   filter jsonb DEFAULT '{}'      -- Optional filter criteria
-)
-RETURNS TABLE (
-  id UUID,           -- Document ID
-  content text,      -- Document content
-  metadata jsonb,    -- Document metadata
-  similarity float   -- Similarity score (0-1)
-)
+) RETURNS TABLE (
+  id bigint,
+  content text,
+  metadata jsonb,
+  similarity float
+) LANGUAGE plpgsql AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    pdf_chunks.id,
+    pdf_chunks.content,
+    pdf_chunks.metadata,
+    1 - (pdf_chunks.embedding <=> query_embedding) AS similarity
+  FROM pdf_chunks
+  WHERE metadata @> filter
+  ORDER BY pdf_chunks.embedding <=> query_embedding
+  LIMIT match_count;
+END;
+$$;
 LANGUAGE plpgsql
 AS $$
 #variable_conflict use_column

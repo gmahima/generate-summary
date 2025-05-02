@@ -375,131 +375,186 @@ export async function queryDocument(formData: FormData): Promise<{
       console.log(`🔍 Processing query: "${query}" for document ID: ${pdfId}`);
 
       // =========================================================
-      // Step 2: Initialize setup for direct chunk retrieval (test mode)
+      // Step 2: Check if we have document chunks for this PDF
       // =========================================================
 
-      try {
-        console.log("🧪 Setting up test mode for direct chunk retrieval...");
+      // Check if we have any document chunks for this PDF directly with SQL
+      console.log("🔍 Checking for document chunks in database...");
+      const { count, error } = await supabaseClient
+        .from("pdf_chunks")
+        .select("*", { count: "exact", head: true })
+        .filter("metadata->>pdf_id", "eq", pdfId);
 
-        // Check if we have any document chunks for this PDF directly with SQL
-        console.log("🔍 Checking for document chunks in database...");
-        const { count, error } = await supabaseClient
-          .from("pdf_chunks")
-          .select("*", { count: "exact", head: true })
-          .filter("metadata->>pdf_id", "eq", pdfId);
+      console.log(
+        `📊 Found ${count || 0} chunks in database for PDF ID: ${pdfId}`,
+      );
 
-        console.log(
-          `📊 Found ${count || 0} chunks in database for PDF ID: ${pdfId}`,
+      if (error) {
+        console.error("❌ Error checking document chunks:", error);
+        throw new Error(
+          `Database error when checking for chunks: ${error.message}`,
         );
+      }
 
-        if (error) {
-          console.error("❌ Error checking document chunks:", error);
-          throw new Error(
-            `Database error when checking for chunks: ${error.message}`,
-          );
-        }
-
-        if (count === 0) {
-          console.warn(
-            "⚠️ No chunks found for this PDF. The document may not have been properly processed.",
-          );
-          return {
-            answer:
-              "I couldn't find any information for this document in my database. The document may not have been properly processed.",
-          };
-        }
-
-        // =========================================================
-        // Step 3: Retrieve chunks directly for testing
-        // =========================================================
-
-        console.log("🔎 Setting up test mode for direct chunk retrieval...");
-
-        // TESTING: Retrieve first 2 chunks directly from database instead of using similarity search
-        const { data: chunkData, error: chunkError } = await supabaseClient
-          .from("pdf_chunks")
-          .select("content, embedding, metadata")
-          .filter("metadata->>pdf_id", "eq", pdfId)
-          .limit(2);
-
-        if (chunkError) {
-          console.error("❌ Error retrieving chunks:", chunkError);
-          throw new Error(`Failed to retrieve chunks: ${chunkError.message}`);
-        }
-
-        console.log(
-          `✅ Retrieved ${chunkData?.length || 0} chunks directly from database`,
+      if (count === 0) {
+        console.warn(
+          "⚠️ No chunks found for this PDF. The document may not have been properly processed.",
         );
+        return {
+          answer:
+            "I couldn't find any information for this document in my database. The document may not have been properly processed.",
+        };
+      }
 
-        // Convert database chunks to Document objects
-        const retrievedDocs = (chunkData || []).map(
-          (chunk) =>
-            new Document({
-              pageContent: chunk.content || "",
-              metadata: chunk.metadata || {},
-            }),
-        );
+      // =========================================================
+      // Step 3: Initialize vector store and run similarity search
+      // =========================================================
 
-        console.log(
-          `🧪 TEST MODE: Using ${retrievedDocs.length} direct chunks instead of similarity search`,
-        );
+      console.log("🧠 Initializing vector store for similarity search...");
+      // Create embeddings model
+      const embeddings = createEmbeddings();
 
-        // Skip the normal retriever.invoke call since we're getting chunks directly
+      // No longer need vectorStore initialization since we're using direct queries
 
-        // =========================================================
-        // Step 4: Create the prompt template for RAG
-        // =========================================================
+      // =========================================================
+      // Step 4: Create the prompt template for RAG
+      // =========================================================
 
-        // Create a prompt template that combines context and user question
-        const prompt = PromptTemplate.fromTemplate(`
-          You are an AI assistant for answering questions about documents.
-          
-          You have been provided with specific sections from a PDF document.
-          
-          Use ONLY the following context to answer the question at the end.
-          If the context doesn't contain enough information to answer the question fully,
-          just say "I don't have enough information in the provided document to answer this question completely."
-          
-          DO NOT make up information that is not in the context.
-          
-          Context:
-          {context}
-          
-          Question: {question}
-          
-          Answer based ONLY on the context provided:
-        `);
+      // Create a prompt template that combines context and user question
+      const prompt = PromptTemplate.fromTemplate(`
+        You are an AI assistant for answering questions about documents.
+        
+        You have been provided with specific sections from a PDF document.
+        
+        Use ONLY the following context to answer the question at the end.
+        If the context doesn't contain enough information to answer the question fully,
+        just say "I don't have enough information in the provided document to answer this question completely."
+        
+        DO NOT make up information that is not in the context.
+        
+        Context:
+        {context}
+        
+        Question: {question}
+        
+        Answer based ONLY on the context provided:
+      `);
 
-        // =========================================================
-        // Step 5: Set up the LLM and create the RAG chain
-        // =========================================================
+      // =========================================================
+      // Step 5: Set up the LLM and create the RAG chain
+      // =========================================================
 
-        // Initialize the Groq model
-        const model = new ChatGroq({
-          apiKey: process.env.GROQ_API_KEY as string,
-          model: "llama-3.1-8b-instant", // Using Llama 3 for inference
-          temperature: 0, // Use 0 for more deterministic responses
+      // Initialize the Groq model
+      const model = new ChatGroq({
+        apiKey: process.env.GROQ_API_KEY as string,
+        model: "llama-3.1-8b-instant", // Using Llama 3 for inference
+        temperature: 0, // Use 0 for more deterministic responses
+      });
+
+      console.log(
+        "🔎 Performing direct vector similarity search with query...",
+      );
+
+      // Convert user query to embedding vector
+      const queryEmbedding = await embeddings.embedQuery(query);
+      console.log("✅ Generated query embedding vector");
+
+      // Define type for query results
+      interface ChunkResult {
+        id: string;
+        content: string;
+        metadata: Record<string, unknown>;
+      }
+
+      // Run direct vector similarity search using pgvector's <=> operator
+      // Note: We use a raw query since the bind() method might not be supported in all versions
+      const { data: vectorResults, error: vectorError } =
+        await supabaseClient.rpc("match_pdf_chunks", {
+          query_vector: queryEmbedding,
+          pdf_id_filter: pdfId,
+          match_limit: 5,
         });
 
-        // =========================================================
-        // Step 6: Execute the RAG chain to generate an answer
-        // =========================================================
-
-        console.log("🤖 Executing RAG chain with Groq LLM...");
-
-        // Process the docs and generate an answer
-        return await processDocsAndGenerateAnswer(
-          retrievedDocs,
-          query,
-          pdfId,
-          userId,
-          prompt,
-          model,
-        );
-      } catch (error) {
-        console.error("❌ Error initializing vector store:", error);
-        throw error;
+      if (vectorError) {
+        console.error("❌ Error performing vector search:", vectorError);
+        throw new Error(`Vector search failed: ${vectorError.message}`);
       }
+
+      console.log(
+        `✅ Vector search completed, found ${vectorResults?.length || 0} results`,
+      );
+
+      // Convert results to Document objects
+      const retrievedDocs = (vectorResults || []).map(
+        (chunk: ChunkResult) =>
+          new Document({
+            pageContent: chunk.content,
+            metadata: chunk.metadata,
+          }),
+      );
+
+      if (retrievedDocs.length === 0) {
+        console.log(
+          "⚠️ No matching documents found! Retrieving a few chunks directly as fallback...",
+        );
+
+        // Fallback: Get a few chunks directly if similarity search returns nothing
+        const { data: fallbackChunks, error: fallbackError } =
+          await supabaseClient
+            .from("pdf_chunks")
+            .select("content, metadata")
+            .filter("metadata->>pdf_id", "eq", pdfId)
+            .limit(3);
+
+        if (fallbackError) {
+          console.error("❌ Error retrieving fallback chunks:", fallbackError);
+        } else if (fallbackChunks && fallbackChunks.length > 0) {
+          console.log(`✅ Retrieved ${fallbackChunks.length} fallback chunks`);
+
+          // Convert to Document format
+          const fallbackDocs = fallbackChunks.map(
+            (chunk) =>
+              new Document({
+                pageContent: chunk.content,
+                metadata: chunk.metadata,
+              }),
+          );
+
+          // Use the fallback chunks instead
+          return await processDocsAndGenerateAnswer(
+            fallbackDocs,
+            query,
+            pdfId,
+            userId,
+            prompt,
+            model,
+          );
+        }
+      }
+
+      // Log a sample of retrieved content
+      if (retrievedDocs.length > 0) {
+        console.log(
+          "📄 Sample retrieved content:",
+          retrievedDocs[0].pageContent.substring(0, 100) + "...",
+        );
+      }
+
+      // =========================================================
+      // Step 6: Execute the RAG chain to generate an answer
+      // =========================================================
+
+      console.log("🤖 Executing RAG chain with Groq LLM...");
+
+      // Process the docs and generate an answer
+      return await processDocsAndGenerateAnswer(
+        retrievedDocs,
+        query,
+        pdfId,
+        userId,
+        prompt,
+        model,
+      );
     } catch (error) {
       console.error("❌ Error querying document:", error);
       throw error;
