@@ -1,5 +1,19 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+# Glance Buddy - PDF & URL Summary Generator
+
+Glance Buddy is a web application that allows users to upload PDFs or provide URLs to generate summaries and chat with the content using RAG (Retrieval Augmented Generation).
+
+## AI Services
+
+This application uses several AI services:
+
+- **[Jina AI](https://jina.ai/)** for:
+  - Embedding generation via the Jina Embeddings API
+
+- **[Groq](https://groq.com/)** for:
+  - LLM inference using the Llama 3.1 models for chat and summarization
+
 ## Getting Started
 
 First, run the development server:
@@ -16,9 +30,28 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Environment Variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+This application requires the following environment variables:
+
+```
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_key
+JINA_API_KEY=your_jina_api_key
+GROQ_API_KEY=your_groq_api_key
+```
+
+## Feature Overview
+
+- Upload and process PDF files
+- Enter URLs to process web content
+- Generate concise summaries of documents
+- Chat with documents using RAG
+- View your library of previously processed documents
+
+## Supabase Setup
+
+This application uses Supabase for database and vector storage. Make sure to set up the required SQL functions by following the instructions in `SUPABASE_SQL_SETUP.md`.
 
 ## Learn More
 

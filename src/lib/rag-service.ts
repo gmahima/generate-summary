@@ -432,6 +432,7 @@ export async function processLink(formData: FormData): Promise<{
             pdf_id: pdfData.id,
             user_id: userId,
             source_type: "link",
+            source: url,
           },
         });
       }),
