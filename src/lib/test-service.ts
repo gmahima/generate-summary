@@ -270,76 +270,64 @@ export async function testVectorStore(pdfId: string): Promise<{
     const vectorStore = new SupabaseVectorStore(embeddings, {
       client: supabaseClient,
       tableName: "pdf_chunks",
-      queryName: "match_documents",
+      queryName: "match_pdf_chunks",
     });
 
-    // Test direct similarity search
+    // Try direct similarity search
     console.log("🔎 Testing similarity search with sample query...");
     const testQuery = "summary of the document";
 
-    // Try the similaritySearch method directly
-    console.log("🧪 Using similaritySearch method...");
+    // Add more diagnostic info
+    console.log(`🔍 Using PDF ID filter: ${pdfId}`);
 
-    try {
-      // Generate query embedding
-      const queryEmbedding = await embeddings.embedQuery(testQuery);
-      console.log(
-        "✅ Generated query embedding with length:",
-        queryEmbedding.length,
-      );
+    // Check database directly for this PDF ID
+    const { count: directCount, error: directCountError } = await supabaseClient
+      .from("pdf_chunks")
+      .select("id", { count: "exact", head: true })
+      .filter("metadata->>pdf_id", "eq", pdfId);
 
-      // Try raw RPC call without filter
-      console.log(
-        "🧪 Testing direct RPC call to match_documents (no filter)...",
-      );
-      const { data: rpcData, error: rpcError } = await supabaseClient.rpc(
-        "match_documents",
-        {
-          query_embedding: queryEmbedding,
-          match_count: 2,
-          // No filter
-        },
-      );
+    console.log(
+      `🔍 Direct database check: ${directCount || 0} chunks found with metadata->>pdf_id = ${pdfId}`,
+    );
 
-      if (rpcError) {
-        console.error("❌ RPC error:", rpcError);
-        return {
-          status: "error",
-          message: `RPC error: ${rpcError.message}. Check if the match_documents function exists and is properly configured.`,
-        };
-      }
-
-      console.log(
-        "✅ RPC call successful, returned:",
-        rpcData?.length || 0,
-        "results",
-      );
-
-      // Try the similaritySearch method without any filter
-      const docs = await vectorStore.similaritySearch(testQuery, 2);
-
-      console.log(`✅ Retrieved ${docs.length} documents (no filter)`);
-
-      return {
-        status: "success",
-        message: `Vector store search results: ${docs.length} docs (no filter), ${rpcData?.length || 0} from direct RPC (no filter)`,
-        data: {
-          retrievedDocs:
-            docs.length > 0
-              ? docs.map((doc) => ({
-                  content: doc.pageContent.substring(0, 100) + "...",
-                  metadata: doc.metadata,
-                }))
-              : [],
-        },
-      };
-    } catch (searchError) {
-      console.error("❌ Error in similarity search:", searchError);
-      return {
-        status: "error",
-        message: `Error in similarity search: ${searchError instanceof Error ? searchError.message : String(searchError)}`,
-      };
+    if (directCountError) {
+      console.error("❌ Error in direct count:", directCountError);
     }
+
+    // Try a raw SQL query to see what's in the database
+    try {
+      const { data: rawChunks } = await supabaseClient
+        .from("pdf_chunks")
+        .select("id, metadata")
+        .limit(5);
+
+      console.log(
+        "🔍 Sample chunks in database:",
+        rawChunks?.map((c) => ({ id: c.id, pdf_id: c.metadata?.pdf_id })) ||
+          "No chunks",
+      );
+    } catch (e) {
+      console.error("❌ Error checking raw chunks:", e);
+    }
+
+    // Try the similaritySearch method without any filter
+    const docs = await vectorStore.similaritySearch(testQuery, 2);
+
+    console.log(`✅ Retrieved ${docs.length} documents (no filter)`);
+
+    return {
+      status: "success",
+      message: `Vector store search results: ${docs.length} docs (no filter), ${directCount || 0} from direct database check`,
+      data: {
+        retrievedDocs:
+          docs.length > 0
+            ? docs.map((doc) => ({
+                content: doc.pageContent.substring(0, 100) + "...",
+                metadata: doc.metadata,
+              }))
+            : [],
+      },
+    };
   } catch (error) {
     console.error("❌ Error in vector store test:", error);
     return {

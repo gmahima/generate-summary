@@ -4,9 +4,9 @@
 import { queryDocument } from "./rag-service";
 
 /**
- * PDF Document Query Service
+ * Content Query Service
  *
- * This service provides an interface for querying PDF documents using
+ * This service provides an interface for querying content (PDFs or web pages) using
  * Retrieval Augmented Generation (RAG). It acts as a wrapper around
  * the core RAG implementation, providing error handling and logging.
  *
@@ -20,25 +20,29 @@ import { queryDocument } from "./rag-service";
  */
 
 /**
- * Query a PDF document using RAG (Retrieval-Augmented Generation)
+ * Query a document using RAG (Retrieval-Augmented Generation)
  *
  * @param formData - Form data containing:
  *   - query: The user's question
- *   - pdfId: The ID of the PDF to query
+ *   - pdfId: The ID of the content to query (could be PDF or web page content)
  *   - userId: The ID of the user making the query
+ *   - contentType: The type of content (pdf or link)
  * @returns Object containing the answer to the query
  */
 export async function queryPdfDocument(
   formData: FormData,
 ): Promise<{ answer: string }> {
-  console.log("🤖 Starting PDF query process with RAG");
+  console.log("🤖 Starting content query process with RAG");
 
   try {
     // Log the values we're receiving
     const query = formData.get("query");
     const pdfId = formData.get("pdfId");
+    const contentType = formData.get("contentType") || "pdf";
+
     console.log(`📝 Query: "${query}"`);
-    console.log(`🔑 PDF ID: ${pdfId}`);
+    console.log(`🔑 Content ID: ${pdfId}`);
+    console.log(`📁 Content Type: ${contentType}`);
 
     // Forward the request to our RAG implementation in rag-service.ts
     // This will:

@@ -2,6 +2,7 @@
 
 import { ChatGroq } from "@langchain/groq";
 import { PDFLoader } from "@langchain/community/document_loaders/fs/pdf";
+import { CheerioWebBaseLoader } from "@langchain/community/document_loaders/web/cheerio";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 import { PromptTemplate } from "@langchain/core/prompts";
 import { StringOutputParser } from "@langchain/core/output_parsers";
@@ -13,14 +14,16 @@ import * as os from "os";
 import { LANGUAGE_CONFIG, SupportedLanguage } from "./language-config";
 
 /**
- * Generates a summary of a PDF file using AI with LangChain and Groq
+ * Generates a summary of a PDF file or web page using AI with LangChain and Groq
  */
 export async function generateSummary(formData: FormData): Promise<string> {
-  console.log("🚀 Starting PDF summary generation process");
+  console.log("🚀 Starting content summary generation process");
 
   // Get parameters from formData
   const file = formData.get("file") as File;
-  const pdfId = formData.get("pdfId") as string;
+  const url = formData.get("url") as string;
+  const contentId = formData.get("contentId") as string;
+  const contentType = (formData.get("contentType") as "pdf" | "link") || "pdf";
   const language = (formData.get("language") as SupportedLanguage) || "english";
   const languageConfig = LANGUAGE_CONFIG[language] || LANGUAGE_CONFIG.english;
 
@@ -28,16 +31,18 @@ export async function generateSummary(formData: FormData): Promise<string> {
     `🌐 Selected output language for summary: ${languageConfig.outputLanguage}`,
   );
 
-  // Check if we have either a file or a pdfId
-  if (!file && !pdfId) {
-    console.error("❌ Neither file nor pdfId provided in the form data");
-    throw new Error("No file or PDF ID provided");
+  // Check if we have a file, URL, or contentId
+  if (!file && !url && !contentId) {
+    console.error(
+      "❌ Neither file, URL, nor contentId provided in the form data",
+    );
+    throw new Error("No file, URL, or content ID provided");
   }
 
   let docs: Document[] = [];
   let tempFilePath = "";
 
-  // Handle PDF from file upload
+  // Handle content from file upload (PDF)
   if (file) {
     console.log(
       `📄 Processing uploaded file: ${file.name}, Size: ${(file.size / 1024).toFixed(2)} KB, Type: ${file.type}`,
@@ -69,9 +74,24 @@ export async function generateSummary(formData: FormData): Promise<string> {
       throw error;
     }
   }
-  // Handle PDF from library (using pdfId)
-  else if (pdfId) {
-    console.log(`📚 Retrieving PDF content from database for ID: ${pdfId}`);
+  // Handle URL input
+  else if (url) {
+    console.log(`🔗 Processing URL: ${url}`);
+
+    try {
+      // Use CheerioWebBaseLoader to extract text from the URL
+      console.log("📚 Loading and parsing web page content...");
+      const loader = new CheerioWebBaseLoader(url);
+      docs = await loader.load();
+      console.log(`📄 Loaded content from URL: ${url}`);
+    } catch (error) {
+      console.error("❌ Error loading URL content:", error);
+      throw error;
+    }
+  }
+  // Handle content from library (using contentId)
+  else if (contentId) {
+    console.log(`📚 Retrieving content from database for ID: ${contentId}`);
 
     try {
       // Import the createClient function from supabase
@@ -83,48 +103,51 @@ export async function generateSummary(formData: FormData): Promise<string> {
         .SUPABASE_SERVICE_ROLE_KEY as string;
       const supabaseClient = createClient(supabaseUrl, supabaseServiceKey);
 
-      // Fetch the PDF content from the database
-      const { data: pdfData, error: pdfError } = await supabaseClient
+      // Fetch the content from the database
+      const { data: contentData, error: contentError } = await supabaseClient
         .from("pdfs")
         .select("content, name")
-        .eq("id", pdfId)
+        .eq("id", contentId)
         .single();
 
-      if (pdfError) {
-        console.error("❌ Error retrieving PDF from database:", pdfError);
-        throw new Error(`Failed to retrieve PDF: ${pdfError.message}`);
+      if (contentError) {
+        console.error(
+          "❌ Error retrieving content from database:",
+          contentError,
+        );
+        throw new Error(`Failed to retrieve content: ${contentError.message}`);
       }
 
-      if (!pdfData || !pdfData.content) {
-        console.error("❌ No content found for PDF ID:", pdfId);
-        throw new Error("PDF content not found in database");
+      if (!contentData || !contentData.content) {
+        console.error("❌ No content found for ID:", contentId);
+        throw new Error("Content not found in database");
       }
 
       console.log(
-        `📄 Retrieved PDF content for "${pdfData.name}" from database`,
+        `📄 Retrieved content for "${contentData.name}" from database`,
       );
 
       // Create a Document object from the database content
       docs = [
         new Document({
-          pageContent: pdfData.content,
-          metadata: { source: `Database PDF ID: ${pdfId}` },
+          pageContent: contentData.content,
+          metadata: { source: `Database content ID: ${contentId}` },
         }),
       ];
     } catch (error) {
-      console.error("❌ Error retrieving PDF from database:", error);
+      console.error("❌ Error retrieving content from database:", error);
       throw error;
     }
   }
 
   if (docs.length === 0) {
-    console.warn("⚠️ No content extracted from PDF");
-    return "Could not extract any content from the provided PDF file.";
+    console.warn("⚠️ No content extracted");
+    return "Could not extract any content from the provided source.";
   }
 
   // Log a sample of the first page content
   console.log(
-    `📝 First page sample: "${docs[0]?.pageContent.substring(0, 100)}..."`,
+    `📝 First content sample: "${docs[0]?.pageContent.substring(0, 100)}..."`,
   );
 
   try {
@@ -154,13 +177,13 @@ export async function generateSummary(formData: FormData): Promise<string> {
       console.warn(
         "⚠️ No GROQ_API_KEY found in environment variables. Using fallback summary.",
       );
-      return `Summary of PDF (API key not configured)\n\nTo generate real summaries, please add your Groq API key to the environment variables.\n\nGet your API key from: https://console.groq.com/keys\n\nThe PDF contained ${splits.length} text chunks with content related to: "${splits[0]?.pageContent.substring(0, 100)}..."`;
+      return `Summary of content (API key not configured)\n\nTo generate real summaries, please add your Groq API key to the environment variables.\n\nGet your API key from: https://console.groq.com/keys\n\nThe content contained ${splits.length} text chunks with content related to: "${splits[0]?.pageContent.substring(0, 100)}..."`;
     }
 
     console.log("🤖 Initializing Groq model...");
     const model = new ChatGroq({
       apiKey,
-      model: "llama-3.1-8b-instant", // Using Llama2 as an example
+      model: "llama-3.1-8b-instant", // Using Llama3.1 8B Instant
       temperature: 0,
     });
     console.log("✅ Groq model initialized");
@@ -168,15 +191,15 @@ export async function generateSummary(formData: FormData): Promise<string> {
     // Create a prompt template for summarization with language output instructions
     console.log("📝 Creating prompt template...");
     const summaryPrompt = PromptTemplate.fromTemplate(`
-      You are a professional document summarizer.
+      You are a professional ${contentType === "pdf" ? "document" : "web page"} summarizer.
       
-      Below is the content from a PDF document. Please create a comprehensive summary 
+      Below is the content from a ${contentType === "pdf" ? "PDF document" : "web page"}. Please create a comprehensive summary 
       that captures the key points, main arguments, and conclusions. The summary should be 
       well-structured, clear, and concise while preserving the important details.
       
       IMPORTANT: Your summary MUST be written entirely in ${languageConfig.outputLanguage} language.
       
-      Document content:
+      Content:
       {text}
       
       ${languageConfig.outputLanguage} Summary:

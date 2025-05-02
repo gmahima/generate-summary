@@ -38,17 +38,19 @@ type Message = {
  * - pdfFile: The PDF file object that was uploaded
  * - pdfId: The database ID of the stored PDF document (needed for RAG)
  * - userId: The ID of the current user (for storing chat history)
+ * - contentType: The type of content being queried (pdf or link)
  */
 interface ChatInterfaceProps {
   pdfFile: File | null;
   pdfId?: string;
   userId?: string;
+  contentType?: "pdf" | "link";
 }
 
 /**
  * Chat Interface Component
  *
- * Provides a chat interface for users to interact with their PDF documents
+ * Provides a chat interface for users to interact with their content (PDF or link)
  * using Retrieval Augmented Generation (RAG).
  *
  * Features:
@@ -58,19 +60,22 @@ interface ChatInterfaceProps {
  * - Loading indicator during processing
  *
  * The component communicates with the backend RAG service to generate
- * contextually relevant answers based on the PDF content.
+ * contextually relevant answers based on the content.
  */
 export function ChatInterface({
   pdfFile,
   pdfId,
   userId = TEMPORARY_USER_ID,
+  contentType = "pdf",
 }: ChatInterfaceProps) {
   // Track chat message history
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "assistant",
       content:
-        "Hello! I can answer questions about your uploaded PDF. What would you like to know?",
+        contentType === "pdf"
+          ? "Hello! I can answer questions about your uploaded PDF. What would you like to know?"
+          : "Hello! I can answer questions about your web page. What would you like to know?",
     },
   ]);
 
@@ -115,8 +120,11 @@ export function ChatInterface({
       formData.append("query", userMessage.content);
       formData.append("pdfId", pdfId);
       formData.append("userId", userId);
+      formData.append("contentType", contentType);
 
-      console.log(`Sending query for PDF ID: ${pdfId}`);
+      console.log(
+        `Sending query for content ID: ${pdfId}, type: ${contentType}`,
+      );
 
       // Set a timeout to detect if server actions aren't responding
       const timeoutPromise = new Promise((_, reject) => {
@@ -365,7 +373,9 @@ export function ChatInterface({
     <Card className="w-full">
       <CardHeader>
         <CardTitle className="flex flex-col sm:flex-row gap-2 justify-between items-start sm:items-center">
-          <span>Chat with your PDF</span>
+          <span>
+            Chat with your {contentType === "pdf" ? "PDF" : "web page"}
+          </span>
           <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
@@ -457,7 +467,7 @@ export function ChatInterface({
       <CardFooter className="p-4 pt-0">
         <div className="flex w-full gap-2">
           <Textarea
-            placeholder="Ask a question about your PDF..."
+            placeholder={`Ask a question about your ${contentType === "pdf" ? "PDF" : "web page"}...`}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             className="resize-none"
