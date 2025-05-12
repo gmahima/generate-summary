@@ -18,6 +18,7 @@ import {
   checkMatchDocumentsFunction,
 } from "@/lib/test-service";
 import { TEMPORARY_USER_ID } from "@/lib/constants";
+import Link from "next/link";
 
 /**
  * Message Type
@@ -377,6 +378,11 @@ export function ChatInterface({
             Chat with your {contentType === "pdf" ? "PDF" : "web page"}
           </span>
           <div className="flex flex-wrap gap-2">
+            <Link href="/calculator">
+              <Button variant="outline" size="sm" title="Go to Calculator">
+                📱 Calculator
+              </Button>
+            </Link>
             <Button
               variant="outline"
               size="sm"
@@ -467,7 +473,7 @@ export function ChatInterface({
       <CardFooter className="p-4 pt-0">
         <div className="flex w-full gap-2">
           <Textarea
-            placeholder={`Ask a question about your ${contentType === "pdf" ? "PDF" : "web page"}...`}
+            placeholder={`Ask a question about your ${contentType === "pdf" ? "PDF" : "web page"} or try a calculation...`}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             className="resize-none"

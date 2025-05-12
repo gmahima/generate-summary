@@ -22,6 +22,7 @@ import { ChatInterface } from "@/components/chat-interface";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PdfLibrary } from "@/components/pdf-library";
 import { Input } from "@/components/ui/input";
+import { Navigation } from "@/components/navigation";
 
 /**
  * Home Page Component
@@ -250,6 +251,8 @@ export default function Home() {
             content
           </p>
         </header>
+
+        <Navigation />
 
         <div className="grid gap-8">
           <Tabs
