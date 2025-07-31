@@ -9,26 +9,6 @@ export function Navigation() {
   return (
     <nav className="flex items-center space-x-4 mb-6">
       <Link
-        href="/"
-        className={`px-3 py-2 rounded-md ${
-          pathname === "/"
-            ? "bg-primary text-primary-foreground"
-            : "hover:bg-muted"
-        }`}
-      >
-        PDF Chat
-      </Link>
-      <Link
-        href="/calculator"
-        className={`px-3 py-2 rounded-md ${
-          pathname === "/calculator"
-            ? "bg-primary text-primary-foreground"
-            : "hover:bg-muted"
-        }`}
-      >
-        Calculator
-      </Link>
-      <Link
         href="/chat"
         className={`px-3 py-2 rounded-md ${
           pathname === "/chat"
@@ -36,7 +16,7 @@ export function Navigation() {
             : "hover:bg-muted"
         }`}
       >
-        General Chat
+        Chat with AI
       </Link>
     </nav>
   );
