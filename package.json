@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "prepare": "husky && husky install",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "vercel-build": "NODE_ENV=production next build"
   },
   "lint-staged": {
     "*.{ts,tsx}": [
