@@ -28,6 +28,16 @@ export function Navigation() {
       >
         Calculator
       </Link>
+      <Link
+        href="/chat"
+        className={`px-3 py-2 rounded-md ${
+          pathname === "/chat"
+            ? "bg-primary text-primary-foreground"
+            : "hover:bg-muted"
+        }`}
+      >
+        General Chat
+      </Link>
     </nav>
   );
 }

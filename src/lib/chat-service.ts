@@ -5,7 +5,7 @@ import { queryDocument } from "./rag-service";
 import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { AgentExecutor, createStructuredChatAgent } from "langchain/agents";
 import { Calculator } from "@langchain/community/tools/calculator";
-import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
+import { ChatGroq } from "@langchain/groq";
 
 /**
  * Content Query Service
@@ -38,10 +38,10 @@ async function createCalculatorAgent() {
 
   try {
     // Initialize the Google Gemini model
-    const model = new ChatGoogleGenerativeAI({
-      model: "gemini-1.5-flash", // Use the appropriate Gemini model
+    const model = new ChatGroq({
+      apiKey: process.env.GROQ_API_KEY as string,
+      model: "mixtral-8x7b-32768", // Use the appropriate Gemini model
       temperature: 0,
-      apiKey: process.env.GOOGLE_API_KEY as string,
     });
 
     // Create agent prompt
