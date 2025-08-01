@@ -5,6 +5,16 @@ import { ChatGroq } from "@langchain/groq";
 import { createTestCaseTool, createTestSuiteTool } from "./test-tools";
 import { AgentExecutor, createOpenAIToolsAgent } from "langchain/agents";
 
+interface TestCase {
+  id: string;
+  url: string;
+  summary: string;
+  method: string;
+  groupId: string;
+  tcType: string;
+  requestType: string;
+}
+
 /**
  * Process a general chat query
  *
@@ -16,7 +26,7 @@ import { AgentExecutor, createOpenAIToolsAgent } from "langchain/agents";
  */
 export async function processGeneralChat(
   query: string,
-): Promise<{ answer: string }> {
+): Promise<{ answer: string; testCase?: TestCase }> {
   console.log(`💬 Processing general chat: "${query}"`);
 
   try {
