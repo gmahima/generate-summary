@@ -2,6 +2,8 @@
 
 import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { ChatGroq } from "@langchain/groq";
+import { createTestCaseTool, createTestSuiteTool } from "./test-tools";
+import { AgentExecutor, createOpenAIToolsAgent } from "langchain/agents";
 
 /**
  * Process a general chat query
@@ -25,23 +27,39 @@ export async function processGeneralChat(
       temperature: 0.7, // Higher temperature for more creative responses
     });
 
-    // Create a simple chat prompt
+    // Create tools array
+    const tools = [createTestSuiteTool, createTestCaseTool];
+
+    // Create a chat prompt with tools
     const prompt = ChatPromptTemplate.fromMessages([
       [
         "system",
-        `You are a helpful, friendly, and knowledgeable assistant. 
-        Provide clear, accurate, and engaging responses to user queries.
+        `You are a helpful, friendly, and knowledgeable assistant with access to tools for creating test suites and test cases. 
+        When users want to create test suites or test cases, use the appropriate tools.
+        For other queries, provide clear, accurate, and engaging responses.
         Be concise but thorough, and maintain a conversational tone.`,
       ],
       ["human", "{input}"],
     ]);
 
-    // Format the prompt with the user's query
-    const chain = prompt.pipe(model);
-    const result = await chain.invoke({ input: query });
+    // Create an agent with the tools
+    const agent = await createOpenAIToolsAgent({
+      llm: model,
+      tools,
+      prompt,
+    });
+
+    // Create an executor
+    const agentExecutor = new AgentExecutor({
+      agent,
+      tools,
+    });
+
+    // Execute the agent
+    const result = await agentExecutor.invoke({ input: query });
 
     console.log("✅ Chat response generated successfully");
-    return { answer: result.content.toString() };
+    return { answer: result.output };
   } catch (error) {
     console.error("❌ Error in general chat:", error);
     return {
