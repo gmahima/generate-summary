@@ -11,7 +11,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { processGeneralChat } from "@/lib/general-chat-service";
-
 /**
  * Message Type
  *
@@ -41,7 +40,7 @@ export function GeneralChat() {
     {
       role: "assistant",
       content:
-        "Hello! I'm your AI assistant. I'm here to help answer your questions and have engaging conversations. What would you like to discuss?",
+        "Hello! I'm your vREST assistant. I can help you create test cases and manage test suites. You can ask me to:\n\n- Create a new test case\n- List test suites\n\nWhat would you like to do?",
     },
   ]);
 
@@ -77,7 +76,11 @@ export function GeneralChat() {
       // Add response to chat
       const assistantMessage: Message = {
         role: "assistant",
-        content: response.answer,
+        content:
+          response.answer +
+          (response.testCase
+            ? `\n\nTest Case Created:\n${JSON.stringify(response.testCase, null, 2)}`
+            : ""),
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
