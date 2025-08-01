@@ -1,9 +1,14 @@
 "use server";
 
-import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { ChatGroq } from "@langchain/groq";
-import { createTestCaseTool, createTestSuiteTool } from "./test-tools";
-import { AgentExecutor, createOpenAIToolsAgent } from "langchain/agents";
+import { createTestCaseTool, listTestSuitesTool } from "./test-tools";
+import { AgentExecutor, createToolCallingAgent } from "langchain/agents";
+import { ChatPromptTemplate } from "@langchain/core/prompts";
+import {
+  SystemMessage,
+  HumanMessage,
+  AIMessage,
+} from "@langchain/core/messages";
 
 interface TestCase {
   id: string;
@@ -26,6 +31,11 @@ interface TestCase {
  */
 export async function processGeneralChat(
   query: string,
+  chatHistory: (SystemMessage | HumanMessage | AIMessage)[] = [
+    new SystemMessage(
+      "You are an AI assistant for API testing. Use the 'list_test_suites' tool to show all available test suites. Do not mix tool calls and text responses. If any detail is missing, ask the user for it.",
+    ),
+  ],
 ): Promise<{ answer: string; testCase?: TestCase }> {
   console.log(`💬 Processing general chat: "${query}"`);
 
@@ -33,30 +43,22 @@ export async function processGeneralChat(
     // Initialize the Groq model
     const model = new ChatGroq({
       apiKey: process.env.GROQ_API_KEY as string,
-      model: "gemma2-9b-it", // Using Mixtral model for better performance
-      temperature: 0.7, // Higher temperature for more creative responses
+      model: "gemma2-9b-it",
+      temperature: 0,
     });
 
     // Create tools array
-    const tools = [createTestSuiteTool, createTestCaseTool];
+    const tools = [listTestSuitesTool, createTestCaseTool];
 
-    // Create a chat prompt with tools
-    const prompt = ChatPromptTemplate.fromMessages([
-      [
-        "system",
-        `You are a helpful, friendly, and knowledgeable assistant with access to tools for creating test suites and test cases. 
-        When users want to create test suites or test cases, use the appropriate tools.
-        For other queries, provide clear, accurate, and engaging responses.
-        Be concise but thorough, and maintain a conversational tone.`,
-      ],
-      ["human", "{input}"],
-    ]);
-
-    // Create an agent with the tools
-    const agent = await createOpenAIToolsAgent({
+    // Create the agent
+    const agent = createToolCallingAgent({
       llm: model,
       tools,
-      prompt,
+      prompt: ChatPromptTemplate.fromMessages([
+        ["placeholder", "{chat_history}"],
+        ["human", "{input}"],
+        ["placeholder", "{agent_scratchpad}"],
+      ]),
     });
 
     // Create an executor
@@ -66,9 +68,14 @@ export async function processGeneralChat(
     });
 
     // Execute the agent
-    const result = await agentExecutor.invoke({ input: query });
+    const result = await agentExecutor.invoke({
+      input: query,
+      chat_history: chatHistory,
+    });
 
     console.log("✅ Chat response generated successfully");
+    console.log("Result:", result);
+
     return { answer: result.output };
   } catch (error) {
     console.error("❌ Error in general chat:", error);

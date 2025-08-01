@@ -1,17 +1,7 @@
 import { tool, StructuredToolInterface } from "@langchain/core/tools";
 import { z } from "zod";
 
-const createTestSuiteSchema = z.object({
-  testSuiteName: z.string().describe("The name of the test suite to create"),
-  testSuiteDescription: z.optional(
-    z.string().describe("A description of the test suite"),
-  ),
-  testSuitePosition: z.optional(
-    z
-      .enum(["first", "last"])
-      .describe("Where to place the test suite in the list"),
-  ),
-});
+// No schema needed for getTestSuites since it doesn't take any parameters
 
 const bodySchema = z.discriminatedUnion("bodyType", [
   z.object({
@@ -87,24 +77,11 @@ const createTestCaseSchema = z.object({
   body: bodySchema.optional().describe("Request body details based on type"),
 });
 
-async function createTestSuite(params: z.infer<typeof createTestSuiteSchema>) {
-  const response = await fetch("http://localhost:3000/test-suites", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      name: params.testSuiteName,
-      description: params.testSuiteDescription || "",
-      parentId: null,
-      position: params.testSuitePosition === "first" ? "1" : "2",
-      afterTestSuiteId: null,
-    }),
-  });
-
+async function getTestSuites() {
+  const response = await fetch("http://localhost:3000/test-suites");
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.message || "Failed to create test suite");
+    throw new Error(error.message || "Failed to fetch test suites");
   }
 
   return response.json();
@@ -117,20 +94,10 @@ async function createTestCase(params: z.infer<typeof createTestCaseSchema>) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      isNewGroup: false,
-      url: params.testCaseURL,
-      groupId: params.testSuiteName,
-      newGroupId: "",
       summary: params.testCaseSummary,
+      description: "",
       method: params.testCaseRequestMethod,
-      position: params.testCasePosition === "first" ? "1" : "3",
-      generateOption: "direct",
-      specificationId: "",
-      tcType: "normal",
-      generateMultipleColumnsForRequestBody: false,
-      operationId: "",
-      templateId: "",
-      requestType: "testcase",
+      url: params.testCaseURL,
     }),
   });
 
@@ -139,105 +106,25 @@ async function createTestCase(params: z.infer<typeof createTestCaseSchema>) {
     throw new Error(error.message || "Failed to create test case");
   }
 
-  const testCase = await response.json();
-
-  // Add query parameters
-  if (params.queryParams) {
-    for (const param of params.queryParams) {
-      await fetch(`http://localhost:3000/test-cases/${testCase.id}/params`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          requestType: "testcase",
-          tcId: testCase.id,
-          name: param.name,
-          value: param.value,
-          type: "query",
-        }),
-      });
-    }
-  }
-
-  // Add request body
-  if (params.testCaseRequestMethod !== "GET" && params.body) {
-    if (
-      params.body.bodyType === "XML" ||
-      params.body.bodyType === "TEXT" ||
-      params.body.bodyType === "JSON"
-    ) {
-      await fetch(`http://localhost:3000/test-cases/${testCase.id}/body`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          requestType: "testcase",
-          tcId: testCase.id,
-          content:
-            params.body.bodyType === "JSON"
-              ? JSON.stringify(params.body.bodyContent)
-              : params.body.bodyContent,
-          type: params.body.bodyType.toLowerCase(),
-        }),
-      });
-    }
-
-    if (params.body.bodyType === "FORM_URL_ENCODED") {
-      for (const param of params.body.bodyContent) {
-        await fetch(`http://localhost:3000/test-cases/${testCase.id}/params`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            requestType: "testcase",
-            tcId: testCase.id,
-            name: param.name,
-            value: param.value,
-            type: "form",
-          }),
-        });
-      }
-    }
-  }
-
-  // Add headers
-  if (params.headers) {
-    for (const header of params.headers) {
-      await fetch(`http://localhost:3000/test-cases/${testCase.id}/headers`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          requestType: "testcase",
-          tcId: testCase.id,
-          name: header.name,
-          value: header.value,
-        }),
-      });
-    }
-  }
-
-  return testCase;
+  return response.json();
 }
 
-export const createTestSuiteTool: StructuredToolInterface = tool(
-  async (params) => {
+export const listTestSuitesTool: StructuredToolInterface = tool(
+  async () => {
     try {
-      await createTestSuite(params);
-      return `Test suite '${params.testSuiteName}' created successfully`;
+      const testSuites = await getTestSuites();
+      const suiteNames = testSuites.map(
+        (suite: { name: string }) => suite.name,
+      );
+      return `Available test suites: ${suiteNames.join(", ")}`;
     } catch (err) {
       return err instanceof Error ? err.message : "Unknown error occurred";
     }
   },
   {
-    name: "create_test_suite",
-    description:
-      "Use this tool whenever the user explicitly wants to create a new test suite",
-    schema: createTestSuiteSchema,
+    name: "list_test_suites",
+    description: "Use this tool to get a list of all available test suites",
+    schema: z.object({}), // Empty schema since no parameters needed
   },
 );
 
