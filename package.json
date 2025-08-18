@@ -18,7 +18,8 @@
     ]
   },
   "dependencies": {
-    "@langchain/core": "^0.3.66",
+    "@langchain/anthropic": "^0.3.26",
+    "@langchain/core": "^0.3.70",
     "@langchain/groq": "^0.2.2",
     "@langchain/openai": "^0.6.3",
     "@radix-ui/react-label": "^2.1.4",
