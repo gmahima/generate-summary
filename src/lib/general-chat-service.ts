@@ -3,13 +3,21 @@
 import { ChatGroq } from "@langchain/groq";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { createTestCaseTool, listTestSuitesTool } from "./test-tools";
-import { AgentExecutor, createToolCallingAgent } from "langchain/agents";
-import { ChatPromptTemplate } from "@langchain/core/prompts";
+import {
+  StateGraph,
+  MessagesAnnotation,
+  START,
+  END,
+} from "@langchain/langgraph";
+import { ToolNode } from "@langchain/langgraph/prebuilt";
 import {
   SystemMessage,
   HumanMessage,
   AIMessage,
+  BaseMessage,
 } from "@langchain/core/messages";
+import { MemorySaver } from "@langchain/langgraph";
+import { RunnableConfig } from "@langchain/core/runnables";
 
 interface TestCase {
   id: string;
@@ -22,7 +30,7 @@ interface TestCase {
 }
 
 /**
- * Process a general chat query
+ * Process a general chat query using LangGraph with LangSmith tracing
  *
  * This function handles general chat conversations with the LLM without any specific context.
  * It uses the Groq model to generate responses to user queries.
@@ -68,10 +76,11 @@ export async function processGeneralChat(
     // ),
     new SystemMessage(BASE_SYSTEM_PROMPT),
   ],
+  userId?: string, // Optional user ID for better tracing
   provider: "groq" | "anthropic" = process.env.LLM_PROVIDER as
     | "groq"
     | "anthropic",
-): Promise<{ answer: string; testCase?: TestCase }> {
+): Promise<{ answer: string; testCase?: TestCase; traceUrl?: string }> {
   console.log(
     `💬 Processing general chat with provider=${provider}: "${query}"`,
   );
@@ -87,39 +96,85 @@ export async function processGeneralChat(
     const model = getLLM(provider);
     // Create tools array
     const tools = [listTestSuitesTool, createTestCaseTool];
+    const modelWithTools = model.bindTools(tools);
 
-    // Create the agent
-    const agent = createToolCallingAgent({
-      llm: model,
-      tools,
-      prompt: ChatPromptTemplate.fromMessages([
-        ["system", BASE_SYSTEM_PROMPT],
-        ["placeholder", "{chat_history}"],
-        ["human", "{input}"],
-        ["placeholder", "{agent_scratchpad}"],
-      ]),
-    });
+    // Define the chatbot function
+    async function chatbot(state: typeof MessagesAnnotation.State) {
+      return { messages: [await modelWithTools.invoke(state.messages)] };
+    }
 
-    // Create an executor
-    const agentExecutor = new AgentExecutor({
-      agent,
-      tools,
-    });
+    // Create tool node
+    const toolNode = new ToolNode(tools);
 
-    // Execute the agent
-    const result = await agentExecutor.invoke({
-      input: query,
-      chat_history: chatHistory,
-    });
+    // Define routing logic
+    function shouldContinue(state: typeof MessagesAnnotation.State) {
+      const messages = state.messages;
+      const lastMessage = messages[messages.length - 1];
+
+      // if (lastMessage.tool_calls?.length) {
+      //   return "tools";
+      // }
+      if (lastMessage instanceof AIMessage && lastMessage.tool_calls?.length) {
+        return "tools";
+      }
+      return END;
+    }
+
+    // Create the graph
+    const workflow = new StateGraph(MessagesAnnotation)
+      .addNode("agent", chatbot)
+      .addNode("tools", toolNode)
+      .addEdge(START, "agent")
+      .addConditionalEdges("agent", shouldContinue)
+      .addEdge("tools", "agent");
+
+    // Compile the graph
+    const checkpointer = new MemorySaver();
+    const app = workflow.compile({ checkpointer });
+
+    // Prepare messages for the graph
+    const messages: BaseMessage[] = [...chatHistory, new HumanMessage(query)];
+
+    // Configure LangSmith tracing with custom metadata
+    const runConfig: RunnableConfig = {
+      configurable: {
+        thread_id: userId ? `user-${userId}` : `chat-${Date.now()}`,
+      },
+      // LangSmith configuration
+      runName: "API Testing Assistant",
+      tags: ["api-testing", "groq", "langgraph"],
+      metadata: {
+        user_id: userId,
+        query_type: "general_chat",
+        model: "gemma2-9b-it",
+        timestamp: new Date().toISOString(),
+        tools_available: tools.map((tool) => tool.name),
+      },
+    };
+
+    // Execute the graph with LangSmith tracing
+    const finalState = await app.invoke({ messages }, runConfig);
+
+    // Extract the final response
+    const lastMessage = finalState.messages[finalState.messages.length - 1];
+    const answer = lastMessage.content as string;
 
     console.log("✅ Chat response generated successfully");
-    console.log("Result:", result);
+    console.log("Result:", answer);
 
-    return { answer: result.output };
+    // Generate trace URL (you can customize this based on your LangSmith setup)
+    const traceUrl = `https://smith.langchain.com/trace/${runConfig.runId}`;
+
+    return {
+      answer,
+      traceUrl: process.env.LANGSMITH_TRACING === "true" ? traceUrl : undefined,
+    };
   } catch (error) {
     console.error("❌ Error in general chat:", error);
     return {
-      answer: `I apologize, but I encountered an error: ${error instanceof Error ? error.message : "Unknown error"}. Please try again.`,
+      answer: `I apologize, but I encountered an error: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }. Please try again.`,
     };
   }
 }

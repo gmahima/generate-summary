@@ -88,6 +88,8 @@ async function getTestSuites() {
 }
 
 async function createTestCase(params: z.infer<typeof createTestCaseSchema>) {
+  console.log("test case params: ", params); //Note: remove this later
+
   const response = await fetch("http://localhost:3000/test-cases", {
     method: "POST",
     headers: {
