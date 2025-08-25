@@ -20,13 +20,13 @@ export function OpenAIChat() {
     transport: new DefaultChatTransport({
       api: "/api/chat",
     }),
-  });
+  }); //!! important -- chat handler from ai-sdk/react
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputValue.trim() || status !== "ready") return;
 
-    sendMessage({ text: inputValue });
+    sendMessage({ text: inputValue }); //!! important -- sending to server
     setInputValue("");
   };
 
