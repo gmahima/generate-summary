@@ -1,19 +1,9 @@
 "use server";
 
-import { ChatGroq } from "@langchain/groq";
-import { ChatAnthropic } from "@langchain/anthropic";
-import { createTestCaseTool, listTestSuitesTool } from "./test-tools";
-import { ChatPromptTemplate } from "@langchain/core/prompts";
-import {
-  SystemMessage,
-  HumanMessage,
-  AIMessage,
-  FunctionMessage,
-} from "@langchain/core/messages";
-import { StateGraph, END } from "@langchain/langgraph";
-import { RunnableSequence } from "@langchain/core/runnables";
-
-import { ToolExecutor } from "@langchain/langgraph/prebuilt";
+import { anthropic } from "@ai-sdk/anthropic";
+import { generateObject, generateText } from "ai";
+import { z } from "zod";
+import { createTestCase, listTestSuites } from "./test-tools";
 
 interface TestCase {
   id: string;
@@ -25,42 +15,9 @@ interface TestCase {
   requestType: string;
 }
 
-// Define state type
-interface AgentState {
-  messages: (SystemMessage | HumanMessage | AIMessage | FunctionMessage)[];
-  chat_history: (SystemMessage | HumanMessage | AIMessage | FunctionMessage)[];
-  current_input: string;
-  tools_output?: Record<string, unknown>;
-  testCase?: TestCase;
-}
-
-/**
- * Process a general chat query
- *
- * This function handles general chat conversations with the LLM without any specific context.
- * It uses the Groq model to generate responses to user queries.
- *
- * @param query - The user's message
- * @returns The LLM's response as a string
- */
-
-function getLLM(provider: "groq" | "anthropic") {
-  if (provider === "groq") {
-    return new ChatGroq({
-      apiKey: process.env.GROQ_API_KEY!,
-      model: "llama-3.3-70b-versatile",
-      temperature: 0,
-    });
-  }
-
-  if (provider === "anthropic") {
-    return new ChatAnthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY!,
-      model: "claude-3-5-sonnet-20240620",
-      temperature: 0,
-    });
-  }
-  throw new Error(`unsupported provider: ${provider}`);
+interface ChatMessage {
+  role: "user" | "assistant" | "system";
+  content: string;
 }
 
 const BASE_SYSTEM_PROMPT = `
@@ -68,160 +25,194 @@ You are the vREST assistant.
 
 Tool policy:
 - ONLY call tools when the user explicitly asks to list test suites or to create a test case.
-- For greetings, small talk, or general questions that don’t require tools, reply conversationally and DO NOT call any tool.
+- For greetings, small talk, or general questions that don't require tools, reply conversationally and DO NOT call any tool.
 - If a tool action is requested but some details are missing, ask clarifying questions first.
 - Never mix a tool call and a normal text reply in the same turn.
+
+Available actions:
+1. "list_test_suites" - Lists all available test suites
+2. "create_test_case" - Creates a new test case with provided parameters
+3. "general_chat" - For general conversation
+
+Analyze the user's message and determine which action is needed. If they're asking to list test suites or create a test case, use the appropriate action. Otherwise, use general_chat.
 `;
 
+// Schema for action determination
+const ActionSchema = z.object({
+  action: z.enum(["list_test_suites", "create_test_case", "general_chat"]),
+  reasoning: z.string().describe("Why this action was chosen"),
+  parameters: z
+    .record(z.any())
+    .optional()
+    .describe("Parameters needed for the action"),
+});
+
+// Schema for test case creation
+const TestCaseCreationSchema = z.object({
+  url: z.string().describe("The URL for the test case"),
+  summary: z.string().describe("Brief summary of what this test case does"),
+  method: z
+    .enum(["GET", "POST", "PUT", "DELETE", "PATCH"])
+    .describe("HTTP method"),
+  groupId: z.string().describe("Group/category ID for the test case"),
+  tcType: z.string().describe("Type of test case"),
+  requestType: z.string().describe("Type of request"),
+});
+
+/**
+ * Process a general chat query using Vercel AI SDK with Anthropic
+ *
+ * @param query - The user's message
+ * @param chatHistory - Previous conversation messages
+ * @returns The response with optional test case data
+ */
 export async function processGeneralChat(
   query: string,
-  chatHistory: (SystemMessage | HumanMessage | AIMessage)[] = [
-    new SystemMessage(BASE_SYSTEM_PROMPT),
-  ],
-  provider: "groq" | "anthropic" = process.env.LLM_PROVIDER as
-    | "groq"
-    | "anthropic",
+  chatHistory: ChatMessage[] = [],
 ): Promise<{ answer: string; testCase?: TestCase }> {
-  console.log(
-    `💬 Processing general chat with provider=${provider}: "${query}"`,
-  );
+  console.log(`💬 Processing general chat: "${query}"`);
 
   try {
-    const model = getLLM(provider);
-    const tools = [listTestSuitesTool, createTestCaseTool];
-    const toolExecutor = new ToolExecutor({ tools });
+    // First, determine what action is needed
+    const { object: actionDecision } = await generateObject({
+      model: anthropic("claude-3-5-sonnet-20241022"),
+      system: BASE_SYSTEM_PROMPT,
+      prompt: `
+        User message: "${query}"
+        
+        Previous conversation context:
+        ${chatHistory.map((msg) => `${msg.role}: ${msg.content}`).join("\n")}
+        
+        Determine the appropriate action for this user message.
+      `,
+      schema: ActionSchema,
+    });
 
-    // Create the chat prompt
-    const chatPrompt = ChatPromptTemplate.fromMessages([
-      ["system", BASE_SYSTEM_PROMPT],
-      ["placeholder", "{messages}"],
-      ["human", "{current_input}"],
-    ]);
+    console.log("🎯 Action determined:", actionDecision);
 
-    // Create agent node to process messages and decide next action
-    const agentNode = RunnableSequence.from([
-      {
-        messages: (state: AgentState) => {
-          // Combine chat history with current messages for context
-          const allMessages = [...state.chat_history];
-
-          // Add the current input as a human message
-          allMessages.push(new HumanMessage(state.current_input));
-
-          return allMessages;
-        },
-      },
-      chatPrompt,
-      model,
-      async (
-        output: AIMessage,
-      ): Promise<{ next: string; state: AgentState }> => {
-        // Create base state update
-        const updatedState: AgentState = {
-          messages: [],
-          chat_history: [],
-          current_input: "",
-          tools_output: {},
-        };
-
-        if (output.additional_kwargs.function_call) {
-          return {
-            next: "tool",
-            state: updatedState,
-          };
-        }
-        return {
-          next: END,
-          state: updatedState,
-        };
-      },
-    ]);
-
-    // Create the state graph
-    const workflow = new StateGraph({});
-
-    // Add nodes
-    workflow.addNode("__start__", agentNode);
-
-    // Create a runnable for the tool node
-    const toolRunnable = RunnableSequence.from([
-      {
-        state: (input: AgentState) => input,
-      },
-      async (input: { state: AgentState }) => {
-        const lastMessage =
-          input.state.messages[input.state.messages.length - 1];
-        if (
-          lastMessage instanceof AIMessage &&
-          lastMessage.additional_kwargs.function_call
-        ) {
-          const action = {
-            tool: lastMessage.additional_kwargs.function_call.name,
-            toolInput: JSON.parse(
-              lastMessage.additional_kwargs.function_call.arguments,
-            ),
-          };
-          const result = await toolExecutor.invoke(action);
-          const functionMessage = new FunctionMessage({
-            content: JSON.stringify(result),
-            name: action.tool,
+    // Handle different actions
+    switch (actionDecision.action) {
+      case "list_test_suites": {
+        try {
+          const testSuites = await listTestSuites();
+          const response = await generateText({
+            model: anthropic("claude-3-5-sonnet-20241022"),
+            system: BASE_SYSTEM_PROMPT,
+            prompt: `
+              The user asked to list test suites. Here are the available test suites:
+              ${JSON.stringify(testSuites, null, 2)}
+              
+              Provide a friendly response that presents this information clearly to the user.
+              User's original message: "${query}"
+            `,
           });
 
-          // Update both messages and chat history
-          const updatedMessages = [...input.state.messages, functionMessage];
-          const updatedHistory = [...input.state.chat_history, functionMessage];
-
+          return { answer: response.text };
+        } catch (error) {
+          console.error("Error listing test suites:", error);
           return {
-            messages: updatedMessages,
-            chat_history: updatedHistory,
-            current_input: input.state.current_input,
-            tools_output: {
-              ...input.state.tools_output,
-              [action.tool]: result,
-            },
-            testCase: input.state.testCase,
+            answer:
+              "I encountered an error while trying to list the test suites. Please try again later.",
           };
         }
-        return input.state;
-      },
-    ]);
+      }
 
-    workflow.addNode("__start__", toolRunnable);
+      case "create_test_case": {
+        // Check if we have enough information to create a test case
+        const hasRequiredInfo =
+          actionDecision.parameters &&
+          actionDecision.parameters.url &&
+          actionDecision.parameters.method;
 
-    // Add edges
-    workflow.addEdge("__start__", END);
+        if (!hasRequiredInfo) {
+          // Ask for missing information
+          const response = await generateText({
+            model: anthropic("claude-3-5-sonnet-20241022"),
+            system: BASE_SYSTEM_PROMPT,
+            prompt: `
+              The user wants to create a test case but hasn't provided all the necessary information.
+              User's message: "${query}"
+              
+              Ask for the missing required information in a friendly way. We need:
+              - URL (endpoint to test)
+              - HTTP method (GET, POST, PUT, DELETE, PATCH)
+              - Summary (what this test case does)
+              - Group ID (category/group for organization)
+              - Test case type
+              - Request type
+            `,
+          });
 
-    // Set entry point
-    workflow.setEntryPoint("__start__");
+          return { answer: response.text };
+        }
 
-    // Compile the workflow
-    const chain = workflow.compile();
+        try {
+          // Extract test case parameters using structured generation
+          const { object: testCaseParams } = await generateObject({
+            model: anthropic("claude-3-5-sonnet-20241022"),
+            system:
+              "Extract test case creation parameters from the user input.",
+            prompt: `
+              User wants to create a test case with this input: "${query}"
+              
+              Extract the following parameters, using reasonable defaults where not specified:
+              - url: The API endpoint URL
+              - summary: Brief description of the test
+              - method: HTTP method (default to GET if not specified)
+              - groupId: Group/category (use "default" if not specified)
+              - tcType: Test case type (use "api" if not specified)
+              - requestType: Request type (use "standard" if not specified)
+            `,
+            schema: TestCaseCreationSchema,
+          });
 
-    // Execute the workflow
-    const result = (await chain.invoke({
-      messages: [],
-      chat_history: chatHistory,
-      current_input: query,
-      tools_output: {},
-      testCase: undefined,
-    })) as unknown as AgentState;
+          // Create the test case
+          const newTestCase = await createTestCase({
+            id: `tc_${Date.now()}`, // Generate a unique ID
+            ...testCaseParams,
+          });
 
-    // Extract the answer from the result
-    const lastMessage = result.messages[
-      result.messages.length - 1
-    ] as AIMessage;
-    const answer =
-      typeof lastMessage.content === "string"
-        ? lastMessage.content
-        : JSON.stringify(lastMessage.content);
+          const response = await generateText({
+            model: anthropic("claude-3-5-sonnet-20241022"),
+            system: BASE_SYSTEM_PROMPT,
+            prompt: `
+              A test case was successfully created with these details:
+              ${JSON.stringify(newTestCase, null, 2)}
+              
+              Provide a friendly confirmation message to the user about the test case creation.
+              User's original message: "${query}"
+            `,
+          });
 
-    console.log("✅ Chat response generated successfully");
-    console.log("Result:", result);
+          return {
+            answer: response.text,
+            testCase: newTestCase,
+          };
+        } catch (error) {
+          console.error("Error creating test case:", error);
+          return {
+            answer:
+              "I encountered an error while creating the test case. Please check your parameters and try again.",
+          };
+        }
+      }
 
-    return {
-      answer,
-      testCase: undefined,
-    };
+      default: {
+        // General chat - just have a conversation
+        const messages = [
+          { role: "system" as const, content: BASE_SYSTEM_PROMPT },
+          ...chatHistory,
+          { role: "user" as const, content: query },
+        ];
+
+        const response = await generateText({
+          model: anthropic("claude-3-5-sonnet-20241022"),
+          messages,
+        });
+
+        return { answer: response.text };
+      }
+    }
   } catch (error) {
     console.error("❌ Error in general chat:", error);
     return {

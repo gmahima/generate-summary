@@ -11,6 +11,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { processGeneralChat } from "@/lib/general-chat-service";
+
 /**
  * Message Type
  *
@@ -65,22 +66,35 @@ export function GeneralChat() {
 
     // Add user message to chat immediately
     const userMessage: Message = { role: "user", content: input.trim() };
-    setMessages((prev) => [...prev, userMessage]);
+    const newMessages = [...messages, userMessage];
+    setMessages(newMessages);
     setInput("");
     setIsLoading(true);
 
     try {
+      // Convert messages to the format expected by the service
+      const chatHistory = newMessages.slice(0, -1).map((msg) => ({
+        role: msg.role as "user" | "assistant",
+        content: msg.content,
+      }));
+
       // Send message to LLM
-      const response = await processGeneralChat(userMessage.content);
+      const response = await processGeneralChat(
+        userMessage.content,
+        chatHistory,
+      );
 
       // Add response to chat
+      let assistantContent = response.answer;
+
+      // If a test case was created, add it to the response
+      if (response.testCase) {
+        assistantContent += `\n\n**Test Case Created:**\n\`\`\`json\n${JSON.stringify(response.testCase, null, 2)}\n\`\`\``;
+      }
+
       const assistantMessage: Message = {
         role: "assistant",
-        content:
-          response.answer +
-          (response.testCase
-            ? `\n\nTest Case Created:\n${JSON.stringify(response.testCase, null, 2)}`
-            : ""),
+        content: assistantContent,
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
@@ -115,7 +129,7 @@ export function GeneralChat() {
             }`}
           >
             <div
-              className={`max-w-[80%] rounded-lg p-3 ${
+              className={`max-w-[80%] rounded-lg p-3 whitespace-pre-wrap ${
                 message.role === "user"
                   ? "bg-primary text-primary-foreground"
                   : "bg-muted"
