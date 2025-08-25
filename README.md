@@ -39,6 +39,7 @@ NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_key
 JINA_API_KEY=your_jina_api_key
 GROQ_API_KEY=your_groq_api_key
+NEXT_PUBLIC_OPENAI_API_KEY=your_openai_api_key
 ```
 
 ## Feature Overview
