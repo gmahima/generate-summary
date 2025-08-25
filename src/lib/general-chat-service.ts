@@ -3,13 +3,17 @@
 import { ChatGroq } from "@langchain/groq";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { createTestCaseTool, listTestSuitesTool } from "./test-tools";
-import { AgentExecutor, createToolCallingAgent } from "langchain/agents";
 import { ChatPromptTemplate } from "@langchain/core/prompts";
 import {
   SystemMessage,
   HumanMessage,
   AIMessage,
+  FunctionMessage,
 } from "@langchain/core/messages";
+import { StateGraph, END } from "@langchain/langgraph";
+import { RunnableSequence } from "@langchain/core/runnables";
+
+import { ToolExecutor } from "@langchain/langgraph/prebuilt";
 
 interface TestCase {
   id: string;
@@ -19,6 +23,15 @@ interface TestCase {
   groupId: string;
   tcType: string;
   requestType: string;
+}
+
+// Define state type
+interface AgentState {
+  messages: (SystemMessage | HumanMessage | AIMessage | FunctionMessage)[];
+  chat_history: (SystemMessage | HumanMessage | AIMessage | FunctionMessage)[];
+  current_input: string;
+  tools_output?: Record<string, unknown>;
+  testCase?: TestCase;
 }
 
 /**
@@ -63,9 +76,6 @@ Tool policy:
 export async function processGeneralChat(
   query: string,
   chatHistory: (SystemMessage | HumanMessage | AIMessage)[] = [
-    // new SystemMessage(
-    //   "You are an AI assistant for API testing. Use the 'list_test_suites' tool to show all available test suites. Do not mix tool calls and text responses. If any detail is missing, ask the user for it.",
-    // ),
     new SystemMessage(BASE_SYSTEM_PROMPT),
   ],
   provider: "groq" | "anthropic" = process.env.LLM_PROVIDER as
@@ -77,45 +87,141 @@ export async function processGeneralChat(
   );
 
   try {
-    // Initialize the Groq model
-    // const model = new ChatGroq({
-    //   apiKey: process.env.GROQ_API_KEY as string,
-    //   model: "gemma2-9b-it",
-    //   temperature: 0,
-    // });
-
     const model = getLLM(provider);
-    // Create tools array
     const tools = [listTestSuitesTool, createTestCaseTool];
+    const toolExecutor = new ToolExecutor({ tools });
 
-    // Create the agent
-    const agent = createToolCallingAgent({
-      llm: model,
-      tools,
-      prompt: ChatPromptTemplate.fromMessages([
-        ["system", BASE_SYSTEM_PROMPT],
-        ["placeholder", "{chat_history}"],
-        ["human", "{input}"],
-        ["placeholder", "{agent_scratchpad}"],
-      ]),
-    });
+    // Create the chat prompt
+    const chatPrompt = ChatPromptTemplate.fromMessages([
+      ["system", BASE_SYSTEM_PROMPT],
+      ["placeholder", "{messages}"],
+      ["human", "{current_input}"],
+    ]);
 
-    // Create an executor
-    const agentExecutor = new AgentExecutor({
-      agent,
-      tools,
-    });
+    // Create agent node to process messages and decide next action
+    const agentNode = RunnableSequence.from([
+      {
+        messages: (state: AgentState) => {
+          // Combine chat history with current messages for context
+          const allMessages = [...state.chat_history];
 
-    // Execute the agent
-    const result = await agentExecutor.invoke({
-      input: query,
+          // Add the current input as a human message
+          allMessages.push(new HumanMessage(state.current_input));
+
+          return allMessages;
+        },
+      },
+      chatPrompt,
+      model,
+      async (
+        output: AIMessage,
+      ): Promise<{ next: string; state: AgentState }> => {
+        // Create base state update
+        const updatedState: AgentState = {
+          messages: [],
+          chat_history: [],
+          current_input: "",
+          tools_output: {},
+        };
+
+        if (output.additional_kwargs.function_call) {
+          return {
+            next: "tool",
+            state: updatedState,
+          };
+        }
+        return {
+          next: END,
+          state: updatedState,
+        };
+      },
+    ]);
+
+    // Create the state graph
+    const workflow = new StateGraph({});
+
+    // Add nodes
+    workflow.addNode("__start__", agentNode);
+
+    // Create a runnable for the tool node
+    const toolRunnable = RunnableSequence.from([
+      {
+        state: (input: AgentState) => input,
+      },
+      async (input: { state: AgentState }) => {
+        const lastMessage =
+          input.state.messages[input.state.messages.length - 1];
+        if (
+          lastMessage instanceof AIMessage &&
+          lastMessage.additional_kwargs.function_call
+        ) {
+          const action = {
+            tool: lastMessage.additional_kwargs.function_call.name,
+            toolInput: JSON.parse(
+              lastMessage.additional_kwargs.function_call.arguments,
+            ),
+          };
+          const result = await toolExecutor.invoke(action);
+          const functionMessage = new FunctionMessage({
+            content: JSON.stringify(result),
+            name: action.tool,
+          });
+
+          // Update both messages and chat history
+          const updatedMessages = [...input.state.messages, functionMessage];
+          const updatedHistory = [...input.state.chat_history, functionMessage];
+
+          return {
+            messages: updatedMessages,
+            chat_history: updatedHistory,
+            current_input: input.state.current_input,
+            tools_output: {
+              ...input.state.tools_output,
+              [action.tool]: result,
+            },
+            testCase: input.state.testCase,
+          };
+        }
+        return input.state;
+      },
+    ]);
+
+    workflow.addNode("__start__", toolRunnable);
+
+    // Add edges
+    workflow.addEdge("__start__", END);
+
+    // Set entry point
+    workflow.setEntryPoint("__start__");
+
+    // Compile the workflow
+    const chain = workflow.compile();
+
+    // Execute the workflow
+    const result = (await chain.invoke({
+      messages: [],
       chat_history: chatHistory,
-    });
+      current_input: query,
+      tools_output: {},
+      testCase: undefined,
+    })) as unknown as AgentState;
+
+    // Extract the answer from the result
+    const lastMessage = result.messages[
+      result.messages.length - 1
+    ] as AIMessage;
+    const answer =
+      typeof lastMessage.content === "string"
+        ? lastMessage.content
+        : JSON.stringify(lastMessage.content);
 
     console.log("✅ Chat response generated successfully");
     console.log("Result:", result);
 
-    return { answer: result.output };
+    return {
+      answer,
+      testCase: undefined,
+    };
   } catch (error) {
     console.error("❌ Error in general chat:", error);
     return {
