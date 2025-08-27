@@ -9,6 +9,7 @@ import {
   stepCountIs,
 } from "ai";
 import { z } from "zod";
+import { createTestCaseTool, listTestSuitesTool } from "./test-tools";
 
 /**
  * Process a streaming chat query using OpenAI
@@ -54,6 +55,8 @@ export async function processOpenAIChat(messages: UIMessage[]) {
             };
           },
         }),
+        listTestSuites: listTestSuitesTool,
+        createTestCase: createTestCaseTool
       },
       stopWhen: stepCountIs(5),
       onStepFinish: async ({ toolResults }) => {

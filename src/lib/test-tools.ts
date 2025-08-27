@@ -1,167 +1,166 @@
-// test-tools.ts
+import { tool as langchainTool, StructuredToolInterface } from "@langchain/core/tools";
+import { tool } from "ai";
+import { z } from "zod";
 
-interface TestCase {
-  id: string;
-  url: string;
-  summary: string;
-  method: string;
-  groupId: string;
-  tcType: string;
-  requestType: string;
-}
+// No schema needed for getTestSuites since it doesn't take any parameters
 
-interface TestSuite {
-  id: string;
-  name: string;
-  description: string;
-  testCases: TestCase[];
-}
+const bodySchema = z.discriminatedUnion("bodyType", [
+  z.object({
+    bodyType: z.literal("JSON"),
+    bodyContent: z.record(z.any()).describe("A valid JSON object"),
+  }),
+  z.object({
+    bodyType: z.literal("XML"),
+    bodyContent: z.string().describe("Raw XML string"),
+  }),
+  z.object({
+    bodyType: z.literal("TEXT"),
+    bodyContent: z.string().describe("Plain text body"),
+  }),
+  z.object({
+    bodyType: z.literal("FORM_URL_ENCODED"),
+    bodyContent: z
+      .array(
+        z.object({
+          name: z.string().describe("Form field name"),
+          value: z.string().describe("Form field value"),
+        }),
+      )
+      .describe("Key-value pairs for form-urlencoded"),
+  }),
+  z.object({
+    bodyType: z.literal("MULTIPART_FORM_DATA"),
+    bodyContent: z
+      .array(
+        z.object({
+          name: z.string().describe("Form field name"),
+          value: z.string().describe("Form field value"),
+        }),
+      )
+      .describe("Key-value pairs for multipart/form-data"),
+  }),
+]);
 
-// Mock data - replace with your actual data source
-const mockTestSuites: TestSuite[] = [
-  {
-    id: "suite_1",
-    name: "Authentication Tests",
-    description: "Tests for user authentication endpoints",
-    testCases: [],
-  },
-  {
-    id: "suite_2",
-    name: "User Management Tests",
-    description: "Tests for user CRUD operations",
-    testCases: [],
-  },
-  {
-    id: "suite_3",
-    name: "API Integration Tests",
-    description: "Tests for third-party API integrations",
-    testCases: [],
-  },
-];
+const createTestCaseSchema = z.object({
+  testSuiteName: z
+    .string()
+    .describe(
+      "Test suite name to create the test case in",
+    ),
+  testCaseSummary: z.string().describe("A summary of the the test case"),
+  testCasePosition: z.optional(
+    z
+      .enum(["first", "last"])
+      .describe("Where to place the test case in the list. Use last by default"),
+  ),
+  testCaseURL: z.string().describe("The URL for Test case. Use /api/sample/gen-by-summary-generator-app by default"),
+  testCaseRequestMethod: z
+    .enum(["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+    .describe("A request method for the test case. Use GET by default"),
+  queryParams: z
+    .array(
+      z.object({
+        name: z.string().describe("Name of the parameter"),
+        value: z.string().describe("Value of the parameter"),
+      }),
+    )
+    .optional()
+    .describe("Array of query or body parameters. Use empty array by default"),
+  headers: z
+    .array(
+      z.object({
+        name: z.string().describe("Name of the header"),
+        value: z.string().describe("Value of the header"),
+      }),
+    )
+    .optional()
+    .describe("Array of header parameters. Use empty array by default"),
+  body: bodySchema.optional().describe("Request body details based on type. Use empty object by default"),
+});
 
-/**
- * List all available test suites
- */
-export async function listTestSuites(): Promise<TestSuite[]> {
-  console.log("📋 Listing test suites...");
-
-  try {
-    // Simulate async operation - replace with actual database/API call
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    console.log(`✅ Found ${mockTestSuites.length} test suites`);
-    return mockTestSuites;
-  } catch (error) {
-    console.error("❌ Error listing test suites:", error);
-    throw new Error("Failed to retrieve test suites");
+async function getTestSuites() {
+  const response = await fetch("http://localhost:3000/test-suites");
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.message || "Failed to fetch test suites");
   }
+
+  return response.json();
 }
 
-/**
- * Create a new test case
- */
-export async function createTestCase(testCase: TestCase): Promise<TestCase> {
-  console.log("🧪 Creating test case:", testCase);
+async function createTestCase(params: z.infer<typeof createTestCaseSchema>) {
+  const response = await fetch("http://localhost:3000/test-cases", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      summary: params.testCaseSummary,
+      description: "",
+      method: params.testCaseRequestMethod,
+      url: params.testCaseURL,
+    }),
+  });
 
-  try {
-    // Validate required fields
-    if (!testCase.url || !testCase.method || !testCase.summary) {
-      throw new Error(
-        "Missing required fields: url, method, and summary are required",
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.message || "Failed to create test case");
+  }
+
+  return response.json();
+}
+
+export const oldListTestSuitesTool: StructuredToolInterface = langchainTool(
+  async () => {
+    try {
+      const testSuites = await getTestSuites();
+      const suiteNames = testSuites.map(
+        (suite: { name: string }) => suite.name,
       );
+      return `Available test suites: ${suiteNames.join(", ")}`;
+    } catch (err) {
+      return err instanceof Error ? err.message : "Unknown error occurred";
     }
+  },
+  {
+    name: "list_test_suites",
+    description: "Use this tool to get a list of all available test suites",
+    schema: z.object({}), // Empty schema since no parameters needed
+  },
+);
 
-    // Simulate async operation - replace with actual database/API call
-    await new Promise((resolve) => setTimeout(resolve, 200));
+export const listTestSuitesTool = tool({
+  description: "Use this tool to get a list of all available test suites",
+  inputSchema: z.object({}),
+  execute: async () => {
+    const testSuites = await getTestSuites();
+    const suiteNames = testSuites.map((suite: { name: string }) => suite.name);
+    return suiteNames;
+  },
+});
 
-    // In a real implementation, you would save this to your database
-    // For now, we'll just return the test case with any processing applied
-    const createdTestCase: TestCase = {
-      ...testCase,
-      id: testCase.id || `tc_${Date.now()}`, // Ensure ID is set
-      tcType: testCase.tcType || "api",
-      requestType: testCase.requestType || "standard",
-      groupId: testCase.groupId || "default",
-    };
+export const oldCreateTestCaseTool: StructuredToolInterface = langchainTool(
+  async (params) => {
+    try {
+      await createTestCase(params);
+      return `Test case '${params.testCaseSummary}' created successfully in test suite '${params.testSuiteName}'`;
+    } catch (err) {
+      return err instanceof Error ? err.message : "Unknown error occurred";
+    }
+  },
+  {
+    name: "create_test_case",
+    description:
+      "Use this tool whenever the user wants to create a new test case",
+    schema: createTestCaseSchema,
+  },
+);
 
-    console.log("✅ Test case created successfully:", createdTestCase);
-    return createdTestCase;
-  } catch (error) {
-    console.error("❌ Error creating test case:", error);
-    throw new Error(
-      `Failed to create test case: ${error instanceof Error ? error.message : "Unknown error"}`,
-    );
-  }
-}
-
-/**
- * Get test case by ID
- */
-export async function getTestCase(id: string): Promise<TestCase | null> {
-  console.log(`🔍 Getting test case with ID: ${id}`);
-
-  try {
-    // Simulate async operation - replace with actual database/API call
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    // In a real implementation, you would query your database
-    // For now, return null as we don't have persistent storage in this example
-    return null;
-  } catch (error) {
-    console.error("❌ Error getting test case:", error);
-    throw new Error("Failed to retrieve test case");
-  }
-}
-
-/**
- * Update an existing test case
- */
-export async function updateTestCase(
-  id: string,
-  updates: Partial<TestCase>,
-): Promise<TestCase | null> {
-  console.log(`📝 Updating test case ${id}:`, updates);
-
-  try {
-    // Simulate async operation - replace with actual database/API call
-    await new Promise((resolve) => setTimeout(resolve, 150));
-
-    // In a real implementation, you would update the record in your database
-    // For now, we'll simulate a successful update
-    const updatedTestCase: TestCase = {
-      id,
-      url: updates.url || "http://example.com/api",
-      summary: updates.summary || "Updated test case",
-      method: updates.method || "GET",
-      groupId: updates.groupId || "default",
-      tcType: updates.tcType || "api",
-      requestType: updates.requestType || "standard",
-      ...updates,
-    };
-
-    console.log("✅ Test case updated successfully:", updatedTestCase);
-    return updatedTestCase;
-  } catch (error) {
-    console.error("❌ Error updating test case:", error);
-    throw new Error("Failed to update test case");
-  }
-}
-
-/**
- * Delete a test case
- */
-export async function deleteTestCase(id: string): Promise<boolean> {
-  console.log(`🗑️ Deleting test case with ID: ${id}`);
-
-  try {
-    // Simulate async operation - replace with actual database/API call
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    // In a real implementation, you would delete from your database
-    console.log("✅ Test case deleted successfully");
-    return true;
-  } catch (error) {
-    console.error("❌ Error deleting test case:", error);
-    throw new Error("Failed to delete test case");
-  }
-}
+export const createTestCaseTool = tool({
+  description: "Use this tool whenever the user wants to create a new test case",
+  inputSchema: createTestCaseSchema,
+  execute: async (params) => {
+    await createTestCase(params);
+    return `Test case '${params.testCaseSummary}' created successfully in test suite '${params.testSuiteName}'`;
+  },
+});

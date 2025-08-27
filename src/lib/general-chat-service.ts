@@ -3,7 +3,7 @@
 import { anthropic } from "@ai-sdk/anthropic";
 import { generateText, stepCountIs, tool } from "ai";
 import { z } from "zod";
-import { createTestCase, listTestSuites } from "./test-tools";
+import { oldCreateTestCaseTool, oldListTestSuitesTool } from "./test-tools";
 
 interface TestCase {
   id: string;
@@ -77,7 +77,7 @@ const tools = {
         groupId,
       });
       try {
-        const newTestCase = await createTestCase({
+        const newTestCase = await oldCreateTestCaseTool({
           id: `tc_${Date.now()}`,
           url,
           summary,
