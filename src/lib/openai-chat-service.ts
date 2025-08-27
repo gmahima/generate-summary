@@ -1,6 +1,6 @@
 "use server";
 
-import { openai } from "@ai-sdk/openai";
+import { createOpenAI } from "@ai-sdk/openai";
 import {
   convertToModelMessages,
   streamText,
@@ -11,18 +11,35 @@ import {
 import { z } from "zod";
 import { createTestCaseTool, listTestSuitesTool } from "./test-tools";
 
+interface OpenAIChatConfig {
+  apiKey: string;
+  modelName?: string;
+}
+
 /**
  * Process a streaming chat query using OpenAI
  *
  * @param messages - Array of UI messages from the chat
+ * @param config - Configuration object containing API key and optional model name
  * @returns A streaming response from OpenAI
  */
-export async function processOpenAIChat(messages: UIMessage[]) {
+export async function processOpenAIChat(
+  messages: UIMessage[],
+  config: OpenAIChatConfig,
+) {
   console.log(`💬 Processing OpenAI chat with ${messages.length} messages`);
 
   try {
+    // Create an OpenAI provider instance with the API key
+    const provider = createOpenAI({
+      apiKey: config.apiKey,
+    });
+
+    // Create a model instance with the specified model name (or default to gpt-4)
+    const model = provider(config.modelName || "gpt-4");
+
     const result = streamText({
-      model: openai("gpt-4"),
+      model,
       system: "You are a helpful assistant.",
       messages: convertToModelMessages(messages),
       tools: {
@@ -56,7 +73,7 @@ export async function processOpenAIChat(messages: UIMessage[]) {
           },
         }),
         listTestSuites: listTestSuitesTool,
-        createTestCase: createTestCaseTool
+        createTestCase: createTestCaseTool,
       },
       stopWhen: stepCountIs(5),
       onStepFinish: async ({ toolResults }) => {
